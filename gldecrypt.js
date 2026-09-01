@@ -1,10 +1,11 @@
-
+// Decrypt vertex shader
 const decvsText =
 "attribute vec2 pos;\n" +
 "void main() {\n" +
 "	gl_Position = vec4(pos, 0.0, 1.0);\n" +
 "}\n";
 
+// Decrypt fragment shader
 const decfsText = 
 "precision highp float;\n" +
 "uniform sampler2D txuni;\n" +
@@ -14,6 +15,7 @@ const decfsText =
 "	gl_FragColor = vec4(texture2D(txuni, gl_FragCoord.xy / txsize).xyz - 0.125, 1.0);\n" +
 "}\n";
 
+// Decrypt screen-filling vertex fan
 const vecMap = new Float32Array([-1.0, 1.0,  -1.0, -1.0,  1.0, -1.0,  1.0, 1.0]);
 
 // OpenGL context
@@ -22,9 +24,15 @@ var gl;
 // Shader program and properties
 var props;
 
+// List of code blocks to process
 var codeList = [];
-var codesLeft;
 
+/*
+ * makeShader - Compiles a shader
+ * Parameters: The shader's source code and type
+ * Output: The compiled shader's OpenGL ID, or null if compilation falied
+ * Behavior: Creates a new shader, prints to console on error
+ */
 function makeShader(src, type) {
 	const shader = gl.createShader(type);
 	if(shader == null) {
@@ -42,6 +50,12 @@ function makeShader(src, type) {
 	return shader;
 }
 
+/*
+ * makeProgram - Links two shaders into a program
+ * Parameters: The OpenGL IDs of the two shaders to link
+ * Output: The linked program's OpenGL ID, or null if linking falied
+ * Behavior: Creates a new program, prints to console on error
+ */
 function makeProgram(vs, fs) {
 	const prog = gl.createProgram();
 	gl.attachShader(prog, vs);
@@ -56,6 +70,11 @@ function makeProgram(vs, fs) {
 	return prog;
 }
 
+/*
+ * genProps - Generates OpenGL variables
+ * Output: An object containing the "decrypt" shader and its handles
+ * Behavior: Creates the "decrypt" shader and an array buffer
+ */
 function genProps() {
 	const vs = makeShader(decvsText, gl.VERTEX_SHADER);
 	const fs = makeShader(decfsText, gl.FRAGMENT_SHADER);
@@ -73,13 +92,15 @@ function genProps() {
 	gl.bindBuffer(gl.ARRAY_BUFFER, vecBuffer);
 	gl.vertexAttribPointer(decpsHandle, 2, gl.FLOAT, false, 0, 0);
 	
-	const props = {decProg: prog, vecBuffer: vecBuffer, decpsHandle: decpsHandle, dectxHandle: dectxHandle, decszHandle: decszHandle};
+	const props = {vs: vs, fs: fs, decProg: prog, vecBuffer: vecBuffer, decpsHandle: decpsHandle, dectxHandle: dectxHandle, decszHandle: decszHandle};
 	return props;
 }
 
-// "gl" is the context
-// "props" is a set of OpenGL indexes
-// "img" is an Image
+/*
+ * decrypt - Unfolds an image into an array
+ * Parameters: An HTML image element
+ * Output: An array representation of the data in the image
+ */
 function decrypt(img) {
 	// Turn the input HTML element into an OpenGL texture
 	gl.activeTexture(gl.TEXTURE0);
@@ -115,31 +136,25 @@ function decrypt(img) {
 	gl.uniform1i(props.dectxHandle, 0);
 	gl.uniform2f(props.decszHandle, img.width, img.height);
 	
+	// Draw and get data
 	gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
 	gl.finish();
 	console.log(gl.checkFramebufferStatus(gl.FRAMEBUFFER));
 	var outData = new Uint8Array(img.naturalWidth * img.naturalHeight * 3 * 3);
 	gl.readPixels(0, 0, img.naturalWidth, img.naturalHeight, gl.RGB, gl.UNSIGNED_BYTE, outData);
+	
+	// Cleanup
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	gl.deleteFramebuffer(buffer);
+	gl.deleteTexture(encodeTex);
+	gl.deleteTexture(bufferTex);
 	return outData;
 }
 
-function subsplit(inchars) {
-	var outchars = ""
-	while(inchars.length > 192) {
-		var midchars = inchars.substring(0, 192);
-		inchars = inchars.substring(192);
-		for(let pos = 0; pos < 96; pos++) {
-			outchars += midchars.substring(pos * 6, (pos + 1) * 6) + "_";
-		}
-		outchars += "\n";
-	}
-	while(inchars.length > 0) {
-		outchars += inchars.substring(0, 6) + "_";
-		inchars = inchars.substring(6);
-	}
-	return outchars;
-}
-
+/*
+ * loadDecrypt - Processes all pending code blocks
+ * Behavior: Unfolds all images into code and cleans up the WebGL environment
+ */
 function loadDecrypt() {
 	for(const codeEntry of codeList) {
 		const codeText = decrypt(codeEntry.img);
@@ -147,10 +162,24 @@ function loadDecrypt() {
 		fmtText = fmtText.replaceAll(/[\x7F-\xFF]/g, "").replaceAll(/[\x00-\x08]/g, "").replaceAll("\t", "   ");
 		codeEntry.codeText.textContent = fmtText;
 	}
-	getASM();
+	getALL();
+	
+	// Cleanup
+	gl.deleteShader(props.vs);
+	gl.deleteShader(props.fs);
+	gl.deleteProgram(props.decProg);
+	gl.deleteBuffer(props.vecBuffer);
+	props = 0;
+	codeList = 0;
+	gl = 0;
 	document.getElementsByTagName("canvas")[0].remove();
 }
 
+/*
+ * decryptAll - Readies all code images for loading
+ * Behavior: Readies the WebGL environment, Adds all code blocks to a list and sets an
+ *    onload to process them
+ */
 function decryptAll() {
 	const canvas = document.getElementsByTagName("canvas")[0];
 	gl = canvas.getContext("webgl");
