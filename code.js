@@ -3,16 +3,22 @@ const CPPTYPES = ["bool", "int", "char", "short", "void", "signed", "unsigned", 
 const CPPFTNS = ["if", "else", "while", "do", "for", "switch", "case", "default", "goto", "return", "break", "continue", "try", "catch", "throw"];
 const CPPOTRS = ["asm", "class", "const", "extern", "false", "inline", "new", "private", "protected", "public", "sizeof", "static", "this", "true", "using"];
 const CPPCMT = "//";
+const CPPMLCS = "/*";
+const CPPMLCE = "*/";
 
 const JAVATYPES = ["boolean", "byte", "char", "double", "float", "int", "long", "short", "void"];
 const JAVAFTNS = ["if", "else", "while", "do", "for", "switch", "case", "default", "goto", "return", "break", "continue", "try", "catch", "throw", "finally"];
 const JAVAOTRS = ["abstract", "assert", "class", "const", "enum", "extends", "false", "final", "implements", "import", "instanceof", "interface", "native", "new", "null", "package", "private", "protected", "public", "return", "static", "strictfp", "super", "synchronized", "throws", "transient", "true", "volatile"];
 const JAVACMT = "//";
+const JAVAMLCS = "/*";
+const JAVAMLCE = "*/";
 
 const ASMTYPES = [".db", ".dw"];
 const ASMFTNS = ["adc", "add", "and", "bit", "call", "cp", "dec", "ei", "ex", "inc", "jp", "ld", "pop", "push", "sla", "sbc", "set", "sub", "res", "ret", "rl", "rst", "xor"];
 const ASMOTRS = [".org", "#define", "#include"];
 const ASMCMT = ";";
+const ASMMLCS = ";;;-"; // Not real, but very unlikely to show up
+const ASMMLCE = "-;;;";
 
 /*
  * highlight - Adds highlighting to code blocks
@@ -20,7 +26,7 @@ const ASMCMT = ";";
  * Behavior: Adds HTML elements to highlight the text in the given element
  */
 function highlight(elmt, type) {
-	var types, ftns, otrs, cmt;
+	var types, ftns, otrs, cmt, mlcs, mlce;
 	
 	switch(type) {
 		case "cpp":
@@ -28,34 +34,56 @@ function highlight(elmt, type) {
 			ftns = CPPFTNS;
 			otrs = CPPOTRS;
 			cmt = CPPCMT;
+			mlcs = CPPMLCS;
+			mlce = CPPMLCE;
 			break;
 		case "java":
 			types = JAVATYPES;
 			ftns = JAVAFTNS;
 			otrs = JAVAOTRS;
 			cmt = JAVACMT;
+			mlcs = JAVAMLCS;
+			mlce = JAVAMLCE;
 			break;
 		case "asm":
 			types = ASMTYPES;
 			ftns = ASMFTNS;
 			otrs = ASMOTRS;
 			cmt = ASMCMT;
+			mlcs = ASMMLCS;
+			mlce = ASMMLCE;
 			break;
 		default:
 			return;
 	}
+	var cmts;
+	cmts = mlcs.charAt(0);
 	
 	var text = elmt.textContent
 	var out = "";
 	var lines = text.split("\n");
 	
+	var mlcmt = false;
+	
 	for(var line of lines) {
-		var cmtpos = line.indexOf(cmt);
 		var fpos = 0, bpos = 0;
+		if(mlcmt) {
+			var mlend = line.indexOf(mlce) + 2;
+			if(mlend == 1) {
+				out += line;
+				continue;
+			}
+			out += line.substring(0, mlend) + "</span>";
+			fpos = mlend;
+			bpos = mlend;
+			mlcmt = false;
+		}
+		var cmtpos = line.indexOf(cmt);
 		var scanning = true;
 		while(scanning) {
 			var found = false;
 			var quot = false;
+			var mlstart = false;
 			var chat;
 			// Separate words
 			wdloop: while(scanning && !found) {
@@ -65,11 +93,12 @@ function highlight(elmt, type) {
 					break wdloop;
 				}
 				chat = line.charAt(bpos);
-				if(chat < '#' || chat == '|' || chat == '/' || chat == '{' || chat == '}' || chat == '[' || chat == ']' || (chat >= '%' && chat <= '-') || (chat >= ':' && chat <= '?')) {
+				if(chat < '#' || chat == '|' || chat == '/' || chat == '{' || chat == '}' || chat == '[' || chat == ']' || (chat >= '%' && chat <= '-') || (chat >= ':' && chat <= '?') || chat == cmts) {
 					found = true;
 					if(chat == '\'' || chat == '\"') quot = true;
-					if(chat == '<') chat = "&lt;";
-					if(chat == '>') chat = "&gt;";
+					//if(chat == '<') chat = "&lt;";
+					//if(chat == '>') chat = "&gt;";
+					if(chat == cmts && line.indexOf(mlcs) == bpos) mlstart = true;
 					break wdloop;
 				}
 				bpos++;
@@ -126,6 +155,21 @@ function highlight(elmt, type) {
 				bpos++;
 				out += "<span class=\"cquote\">" + line.substring(fpos, bpos) + "</span>";
 				fpos = bpos;
+				if(cmtpos != -1 && cmtpos < fpos) {
+					cmtpos = line.substring(fpos).indexOf(cmt);
+					if(cmtpos != -1) cmtpos += fpos;
+				}
+			} else if(mlstart) {
+				mlstart = false;
+				out += "<span class=\"ccomment\">";
+				var mlend = line.indexOf(mlce) + 2;
+				if(mlend == 1) {
+					out += line.substring(bpos);
+					mlcmt = true;
+					break;
+				}
+				out += line.substring(bpos, mlend) + "</span>";
+				bpos = mlend;
 			} else {
 				out += chat;
 				bpos++;
@@ -133,8 +177,8 @@ function highlight(elmt, type) {
 			}
 		}
 		// Handle comments
-		if(cmtpos != -1) {
-			out += "<span class=\"ccomment\">" + line.substring(cmtpos) + "</span>"
+		if(cmtpos != -1 && !mlcmt) {
+			out += "<span style=color:green>" + line.substring(cmtpos) + "</span>"
 		}
 	}
 	elmt.innerHTML = out;
