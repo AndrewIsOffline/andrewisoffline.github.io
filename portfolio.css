@@ -1,4 +1,10 @@
 
+body {
+	background-image: url("gradienthc.png");
+	background-size: auto 100%;
+	background-attachment: fixed;
+}
+
 code {
     display: inline-block;
     background-color: wheat;
@@ -30,7 +36,6 @@ table {
 .ccomment {
 	color: green;
 }
-
 
 .cfunction {
 	color: blue;
