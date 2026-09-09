@@ -122,7 +122,6 @@ function decrypt(img) {
 	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, img.naturalWidth, img.naturalHeight, 0, gl.RGB, gl.UNSIGNED_BYTE, null);
 	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bufferTex, 0);
 	gl.viewport(0, 0, img.naturalWidth, img.naturalHeight);
-	console.log(gl.checkFramebufferStatus(gl.FRAMEBUFFER));
 	
 	gl.clearColor(0, 0, 0, 1); 
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -139,7 +138,6 @@ function decrypt(img) {
 	// Draw and get data
 	gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
 	gl.finish();
-	console.log(gl.checkFramebufferStatus(gl.FRAMEBUFFER));
 	var outData = new Uint8Array(img.naturalWidth * img.naturalHeight * 3 * 3);
 	gl.readPixels(0, 0, img.naturalWidth, img.naturalHeight, gl.RGB, gl.UNSIGNED_BYTE, outData);
 	
@@ -160,6 +158,7 @@ function loadDecrypt() {
 		const codeText = decrypt(codeEntry.img);
 		var fmtText = String.fromCharCode(...codeText);
 		fmtText = fmtText.replaceAll(/[\x7F-\xFF]/g, "").replaceAll(/[\x00-\x08]/g, "").replaceAll("\t", "   ");
+		fmtText = fmtText.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 		codeEntry.codeText.textContent = fmtText;
 	}
 	getALL();
