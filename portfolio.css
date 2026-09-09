@@ -5,6 +5,19 @@ body {
 	background-attachment: fixed;
 }
 
+td {
+	font-weight: bold;
+}
+
+td div {
+	width: 100%;
+	height: auto;
+	aspect-ratio: 47/22;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+}
+
 code {
     display: inline-block;
     background-color: wheat;
