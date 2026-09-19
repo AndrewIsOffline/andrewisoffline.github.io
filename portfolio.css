@@ -11,11 +11,14 @@ td {
 
 td div {
 	width: 100%;
-	height: auto;
+	height: 100%;
 	aspect-ratio: 47/22;
-	display: flex;
-	justify-content: center;
-	align-items: center;
+	display: table;
+}
+
+td div div {
+	display: table-cell;
+	vertical-align: middle;
 }
 
 code {
