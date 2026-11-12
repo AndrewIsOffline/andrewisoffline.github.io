@@ -1,21 +1,1303 @@
 <!doctype html>
 <html>
-<head>
-	<title>Capitalism - Portfolio</title>
-	<meta charset="utf-8"/>
-	<meta name="viewport" content="width=device-width, initial-scale=1"/>
-	<link href="portfolio.css" rel="stylesheet" type="text/css"/>
-</head>
-<body>
-	<h1 class="center">Capitalism</h1>
-	<p>Capitalism was an Android card video game based on a card game I played in high school (also called Capitalism, or commonly President). It's a fully featured app that even makes use of the Google Play Games API to update player achievements.</p>
-	<p>Due to software and hardware limitations at the time, I found it easier to write this app using fewer, larger files. The below code handled drawing and most non-gameplay functionality.</p>
-	<div class="code">
-		<code class="java"></code>
-		<img src="CapitalView.png" class="center" />
-	</div>
-	<canvas>This page needs WebGL to work!</canvas>
-	<script src="code.js" type="text/javascript"></script>
-	<script src="gldecrypt.js" type="text/javascript"></script>
-</body>
+	<head>
+		<title>Capitalism - Portfolio</title>
+		<meta charset="utf-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1"/>
+		<link href="portfolio.css" rel="stylesheet" type="text/css"/>
+	</head>
+	<body>
+		<h1 class="center">Capitalism</h1>
+		<p>Capitalism was an Android card video game based on a card game I played in high school (also called Capitalism, or commonly President). It's a fully featured app that even makes use of the Google Play Games API to update player achievements.</p>
+		<p>Due to software and hardware limitations at the time, I found it easier to write this app using fewer, larger files. The below code handled drawing and most non-gameplay functionality.</p>
+		<code class="java">package net.YMOffline.pjcapital;
+
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.Shader;
+import android.graphics.drawable.BitmapDrawable;
+import android.net.Uri;
+import android.os.Build;
+import android.os.SystemClock;
+import android.support.v4.widget.DrawerLayout;
+import android.util.DisplayMetrics;
+import android.view.GestureDetector;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.SurfaceView;
+import android.view.View;
+import android.widget.Toast;
+
+import com.google.android.gms.auth.api.signin.GoogleSignIn;
+import com.google.android.gms.games.Games;
+import com.google.android.gms.games.GamesClient;
+import com.google.android.gms.tasks.OnSuccessListener;
+
+import java.io.File;
+import java.io.RandomAccessFile;
+
+
+public class CapitalView extends SurfaceView {
+	// Number of text rows per help page
+	final byte TEXTROWS = 8;
+	
+	// ----- Mechanics -----
+	// Activity "superclass"
+	MainActivity here;
+	
+	// Mechanics "subclass" thread
+	CapitalMechanics mech;
+	
+	// Simple tap interpreter
+	GestureDetector tapDetector;
+	
+	// Current program state
+	byte state;
+	
+	// Current help page
+	int rulepos;
+	
+	// Currently selected main menu option
+	byte spos;
+	
+	// FPS limit timing variables
+	long curtime, lasttime, checktime;
+	
+	// Last screen tap location
+	int tapx, tapy;
+	
+	// Save and settings files
+	File saveFile, setFile;
+	
+	// True if a continue file exists
+	boolean cnt;
+	
+	// Clear position, if waiting for confirm
+	byte cc;
+	
+	// Intro timer
+	short timer;
+	
+	// ----- Drawing -----
+	// Draw settings
+	Paint p;
+	
+	// Text images
+	Bitmap tQuit, tKeep, tReady, tMenu, tCont, tPlay, tRound, tDiff, tDiffVal, tCard;
+	Bitmap tPlayNum, tRoundNum, tCS, tNewGame, tSettings, tQuickSettings, tDelete;
+	Bitmap tDelConf, tNoSave, tHowTo, tRules, tYG, tBC, tManual, tCopyright, tHandle;
+	
+	// Rotated current turn arrow image
+	Bitmap bt;
+	
+	// Original and "rotated" crown images
+	Bitmap dcrown, dcs;
+	
+	// Background image
+	BitmapDrawable bground;
+	
+	// Playing card objects
+	Card[] pics;
+	
+	// Current turn arrow rotation matrix
+	Matrix rt;
+	
+	// Spinning crown "rotation" matrix
+	Matrix scl;
+	
+	// Common display measurements: Base, quarter, eighth
+	int wid, hei, qw, qh, ew, eh;
+	// Half the display width and height
+	float hw, hh;
+	
+	// Old current player, for updating current player arrow
+	byte oturn;
+	
+	// Current background number
+	byte bgnum;
+	
+	// Skip and clear buttons positions and sizes
+	float sxpos, sypos, cxpos;
+	float sxwid, sxhei;
+	
+	// Continue and new game/quick play button positions
+	int hx, hy, lx, ly;
+	
+	// Y position of the current turn arrow
+	float rypos;
+	
+	// Player screen positions
+	int[][] playpos;
+	
+	// ----- Settings -----
+	// Settings menu screen
+	byte substate;
+	
+	// Settings: Quick play players, card design, quick play AI difficulty, quick play
+	//    number of rounds
+	byte playSet, cardSet, lvlSet;
+	short roundSet;
+	
+	// New game settings: Number of players, AI difficulty, number of rounds
+	byte tempPlaySet, tempLvlSet;
+	short tempRoundSet;
+	
+	// True if using big skip/clear buttons
+	boolean bigSet;
+	
+	// True if was using big skip/clear buttons (for running button redraw)
+	boolean isCChange;
+	
+	// True if the "delete save data" button has been pressed once
+	boolean isDelConf;
+	
+	// Storage for settings button positions
+	int[] setpos;
+	
+	// ----- Spinning Cards -----
+	// Spinning cards rotation count and suit
+	byte rcnt, suit;
+	
+	// Spinning cards angle
+	short rotpos;
+	
+	// Spinning card positions
+	int[][] cardpos;
+	
+	// ----- Drawer -----
+	// The in-game options side drawer
+	DrawerLayout drawerui;
+	
+	// True if the side drawer should be locked
+	boolean doLock;
+	
+	// ----- Toast -----
+	// True if there is a toast to display
+	static boolean toDraw;
+	
+	// Toast text to be displayed
+	static String toText;
+	
+	// State:
+	// 00: playing
+	// 01: round over
+	// 02: resetting
+	// 03: selecting swap cards
+	// 04: new game pause
+	// 05: selecting give cards
+	// 06: game over transition
+	// 07: game over transition 2
+	// 08: game over
+	
+	// 09: in-game settings (DEPRICATED)
+	
+	// 10: main menu
+	// 11: new game
+	// 12: settings
+	// 13: help
+	// 14: about
+	// 15: intro
+	
+	// Setpos:
+	// 01: play number x position
+	// 02: round number x position
+	// 03: card set number x position
+	
+	
+	/*
+	 * CapitalView - Default constructor
+	 */
+	CapitalView(Context m) {
+		super(m);
+		here = (MainActivity)m;
+		
+		// Load settings
+		setFile = new File(m.getFilesDir(), "settings.dat");
+		if(!setFile.exists()) makeSettings();
+		try {
+			RandomAccessFile reader = new RandomAccessFile(setFile, "r");
+			byte version = reader.readByte();
+			if(version &gt; 2 || version &lt; 0) {
+				// Bad settings file, redo
+				reader.close();
+				makeSettings();
+				playSet = 4;
+				roundSet = 3;
+				lvlSet = AI.LVL_EASY;
+			} else {
+				playSet = reader.readByte();
+				roundSet = Utils.cmb16(reader.readByte(), reader.readByte());
+				cardSet = reader.readByte();
+				if(version &gt; 0) {
+					lvlSet = reader.readByte();
+				} else lvlSet = AI.LVL_EASY;
+				boolean[] sets = Utils.unStore(reader.readByte());
+				bigSet = sets[0];
+				if(version &gt; 1) {
+					bgnum = reader.readByte();
+				} else bgnum = 0;
+				reader.close();
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		
+		// Check if saved game exists
+		saveFile = new File(m.getFilesDir(), "savegame.dat");
+		if(saveFile.exists()) cnt = true;
+		
+		// Log player in for achievements
+		here.playerAcct = GoogleSignIn.getLastSignedInAccount(here);
+		if(here.playerAcct != null) {
+			GamesClient gamesClient = Games.getGamesClient(m, here.playerAcct);
+			gamesClient.setViewForPopups(this);
+		}
+		AchievementManager.init(here);
+		
+		// Set up drawing objects
+		p = new Paint();
+		p.setStyle(Paint.Style.STROKE);
+		p.setAntiAlias(false);
+		p.setDither(false);
+		state = 2;
+		Resources r = getResources();
+		Card.firstInit(r);
+		Card.initialize(r, cardSet);
+		AI.initialize();
+		TextDraw.initialize(r);
+		rt = new Matrix();
+		scl = new Matrix();
+		DisplayMetrics dm = new DisplayMetrics();
+		((Activity)m).getWindowManager().getDefaultDisplay().getMetrics(dm);
+		int height = dm.heightPixels;
+		int width = dm.widthPixels;
+		hw = width / 4;
+		hh = height / 4;
+		spos = -1;
+		
+		// Set up spinning card positions
+		cardpos = new int[13][2];
+		for(int i = 0; i &lt; 13; i++) {
+			cardpos[i][0] -= Card.cwid;
+			cardpos[i][1] -= Card.chei;
+		}
+		
+		// Make cards
+		float wx = hw - Card.cwid / 2;
+		float wy = hh - Card.chei / 2;
+		pics = new Card[52];
+		for(byte i = 0; i &lt; 52; i++) pics[i] = new Card(i, wx, wy);
+		
+		// Set up draw space
+		setScaleX(2);
+		setScaleY(2);
+		wid = width / 2;
+		hei = height / 2;
+		setTranslationX(wid);
+		setTranslationY(hei);
+		
+		// Make text images
+		p.setColor(Color.WHITE);
+		tQuit = TextDraw.makeString(r.getString(R.string.quit), 2);
+		tKeep = TextDraw.makeString(r.getString(R.string.onemoreround), 2);
+		tReady = TextDraw.makeString(r.getString(R.string.ready), 2);
+		
+		Bitmap[] mMap = new Bitmap[2];
+		mMap[0] = TextDraw.makeString(r.getString(R.string.quickplay), 3);
+		mMap[1] = TextDraw.makeString(r.getString(R.string.newgame), 3);
+		tMenu = Utils.vStitch(mMap);
+		tNewGame = TextDraw.makeString(r.getString(R.string.newgame), 3);
+		tQuickSettings = TextDraw.makeString(r.getString(R.string.quickplaysettings), 3);
+		tSettings = TextDraw.makeString(r.getString(R.string.settings), 3);
+		tCont = TextDraw.makeString(r.getString(R.string.continue_), 3);
+		tPlay = TextDraw.makeString(r.getString(R.string.players), 3);
+		tRound = TextDraw.makeString(r.getString(R.string.rounds), 3);
+		tDiff = TextDraw.makeString(r.getString(R.string.difficulty), 3);
+		tCard = TextDraw.makeString(r.getString(R.string.cardset), 3);
+		tCS = TextDraw.makeString(r.getString(R.string.bigskipclearbuttons), 2);
+		tBC = TextDraw.makeString(r.getString(R.string.backgroundandcarddesign), 2);
+		tDelete = TextDraw.makeString(r.getString(R.string.deletesave), 2);
+		tNoSave = TextDraw.makeString(r.getString(R.string.nosavedata), 2);
+		tDelConf = TextDraw.makeString(r.getString(R.string.areyousure), 2);
+		tHowTo = TextDraw.makeString(r.getString(R.string.howtoplay), 3);
+		tManual = TextDraw.makeString(r.getString(R.string.loadachievementdata), 2);
+		tCopyright = TextDraw.makeString(r.getString(R.string.copyright), 2);
+		tHandle = TextDraw.makeString(r.getString(R.string.name), true);
+		tRules = TextDraw.makeString(r.getStringArray(R.array.rules)[0], 2);
+		
+		// Set up screen dimension variables
+		lx = (wid - tMenu.getWidth()) / 2;
+		hx = (wid + tMenu.getWidth()) / 2;
+		ly = hei / 2 - tCont.getHeight();
+		hy = (hei / 2) + tMenu.getHeight();
+		qw = wid / 4;
+		qh = hei / 4;
+		ew = wid / 8;
+		eh = hei / 8;
+		
+		// Set up background image
+		if(bgnum &gt; 0) {
+			bground = new BitmapDrawable(r, Card.getBG(r, bgnum));
+			bground.setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
+		}
+		
+		// Set up button dimension variables
+		rePos();
+		rypos = (hei / 2) + Card.chei - 5;
+		
+		// Set up ontouch listeners
+		tapDetector = new GestureDetector(here, new GestureDetector.SimpleOnGestureListener() {
+			public boolean onSingleTapUp(MotionEvent event) {
+				return true;
+			}
+		});
+		setOnTouchListener(new OnTouchListener() {
+			@Override
+			public boolean onTouch(View v, MotionEvent event) {
+				tapx = (int)event.getX();
+				tapy = (int)event.getY();
+				if(tapDetector.onTouchEvent(event)) {
+					performClick();
+					return true;
+				} else return false;
+			}
+		});
+		
+		setOnClickListener(new OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				// If in-game, open the drawer if the button is pressed
+				if(state &lt; 9 && tapx &lt; Card.draw.getWidth() + 20 && tapy &lt; Card.draw.getHeight() + 20) {
+					drawerui.openDrawer(Gravity.START);
+				}
+				float psx, psy;
+				switch(state) {
+					// Playing a game
+					case 0:
+						psx = tapx;
+						psy = tapy;
+						if(psy &gt; hei - Card.chei && psy &lt; hei && Math.abs(psx - (wid / 2)) &lt; CapitalMechanics.awid) {
+							// Pressed a card
+							mech.setSel(psx);
+						} else if(psy &gt; hei - Card.chei - 32 && psy &lt; hei - Card.chei) {
+							// Pressed the top of a pushed-out card
+							float nx = psx - pics[mech.hands[0][mech.sel]].destx;
+							if(nx &gt; 0 && nx &lt; Card.cwid) {
+								mech.setSel(pics[mech.hands[0][mech.sel]].destx + 1);
+							}
+						} else if(psy &gt; sypos && psy &lt; sypos + sxhei) {
+							if(psx &gt; sxpos && psx &lt; sxpos + sxwid && mech.turn == 0) {
+								// Pressed the "skip" button
+								if(mech.isConf) {
+									mech.sel = -2;
+									mech.hasSel = true;
+								} else {
+									mech.isConf = true;
+									mech.isCConf = false;
+									if(mech.sel != -1) {
+										pics[mech.hands[0][mech.sel]].desty += 32;
+										mech.sel = -1;
+									}
+								}
+							} else if(psx &gt; cxpos && psx &lt; cxpos + sxwid) {
+								// Pressed the "clear" button
+								if(mech.canClear((byte)0)) {
+									mech.clearpos = mech.turn;
+								} else if(mech.turn == 0) {
+									if(mech.isCConf) {
+										mech.ccpos = cc;
+										mech.hasSel = true;
+									} else {
+										cc = mech.getCClear((byte)0);
+										if(cc &gt;= 0) {
+											mech.isCConf = true;
+											mech.isConf = false;
+											if(mech.sel != -1) {
+												pics[mech.hands[0][mech.sel]].desty += 32;
+												mech.sel = -1;
+											}
+										}
+									}
+								}
+							}
+						}
+						break;
+					// Round over
+					case 1:
+						// Start a new game
+						mech.reset();
+						break;
+					// Selecting swap cards (player requesting)
+					case 3:
+						psx = tapx - hw + Card.cwid * 3.5f;
+						psy = tapy - hh + Card.chei;
+						if(psx &gt; 0 && psx &lt; Card.cwid * 7f && psy &gt; 0 && psy &lt; Card.chei * 2) {
+							// Swap card selected, pass to mech
+							byte pos = (byte)((byte)(psx / Card.cwid) + (byte)(psy / Card.chei) * 7);
+							if(mech.isCheck[pos]) {
+								mech.sel = pos;
+								mech.hasSel = true;
+							}
+						}
+						break;
+					// New game pause
+					case 4:
+						// Start the game
+						state = 0;
+						break;
+					// Selecting give cards (player giving)
+					case 5:
+						psx = tapx;
+						psy = tapy;
+						if(psy &gt; hei - Card.chei && psy &lt; hei && Math.abs(psx - (wid / 2)) &lt; CapitalMechanics.awid) {
+							mech.setSel(psx);
+						}
+						break;
+					// Game over transition 1
+					case 6:
+						crownApply();
+						// Fallthrough
+					// Game over transition 2
+					case 7:
+						mech.ang = 720;
+						mech.vis = 255;
+						state = 8;
+						break;
+					// Game over
+					case 8:
+						if(tapy &gt; hh + qh && tapy &lt; hh + qh + tKeep.getHeight()) {
+							if(tapx &lt; qw + tKeep.getWidth() / 2 && tapx &gt; qw - tKeep.getWidth() / 2) {
+								// Add another round
+								mech.rounds++;
+								mech.reset();
+								here.drawerui.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED);
+							} else if(tapx &lt; hw + qw + tQuit.getWidth() / 2 && tapx &gt; hw + qw - tQuit.getWidth() / 2) {
+								// Quit to menu
+								state = 10;
+								mech.running = false;
+							}
+						}
+						break;
+					// Main menu
+					case 10:
+						if(tapx &lt; hx && tapx &gt; lx && tapy &lt; hy && tapy &gt; ly) {
+							spos = (byte)((tapy - ly) / tCont.getHeight());
+						} else spos = -1;
+						if(tapx &lt; hx && tapx &gt; lx && tapy &lt; hy && tapy &gt; ly) {
+							// Pressed one of the center buttons
+							switch(spos) {
+								// Continue button
+								case 0:
+									if(!cnt) break;
+									mech = new CapitalMechanics(CapitalView.this, saveFile);
+									playpos = mech.playpos;
+									mech.start();
+									here.drawerui.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED);
+									state = mech.tempState;
+									break;
+								// Quick play button
+								case 1:
+									if(cnt) AchievementManager.here.reset();
+									mech = new CapitalMechanics(CapitalView.this);
+									playpos = mech.playpos;
+									mech.start();
+									here.drawerui.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED);
+									state = 4;
+									break;
+								// New game button, set up new game screen
+								case 2:
+									tempPlaySet = playSet;
+									tempRoundSet = roundSet;
+									tempLvlSet = lvlSet;
+									tPlayNum = Utils.trim(TextDraw.makeString(tempPlaySet + "", 3));
+									tRoundNum = Utils.trim(TextDraw.makeString(tempRoundSet + "", 3));
+									tDiffVal = Utils.trim(TextDraw.makeString(AI.DIFFICULTY[tempLvlSet], 3));
+									setpos = new int[11];
+									setpos[0] = (int)(hw + qw - Card.lefta.getWidth() - 10);
+									setpos[1] = (tPlayNum.getHeight() - Card.lefta.getHeight()) / 2;
+									setpos[2] = (int)(hw + qw + tPlayNum.getWidth() + 10);
+									setpos[3] = (int)(hw + qw + tRoundNum.getWidth() + 10);
+									setpos[4] = (int)(hw + qw + tDiffVal.getWidth() + 10);
+									setpos[5] = (int)(hw - tNewGame.getWidth() / 2);
+									state = 11;
+									break;
+							}
+							spos = -1;
+						} else if(tapy &lt; 20 + Card.set.getHeight() && tapx &gt; wid - 30 - Card.set.getWidth() * 2) {
+							if(tapx &gt; wid - 15 - Card.set.getWidth()) {
+								// Pressed the settings button, ready settings
+								tPlayNum = Utils.trim(TextDraw.makeString(playSet + "", 3));
+								tRoundNum = Utils.trim(TextDraw.makeString(roundSet + "", 3));
+								tDiffVal = Utils.trim(TextDraw.makeString(AI.DIFFICULTY[lvlSet], 3));
+								Card.initPrv(here.getResources());
+								setpos = new int[21];
+								setpos[0] = (int)(hw + qw - Card.lefta.getWidth() - 10);
+								setpos[1] = (tPlayNum.getHeight() - Card.lefta.getHeight()) / 2;
+								setpos[2] = (int)(hw + qw + tPlayNum.getWidth() + 10);
+								setpos[3] = (int)(hw + qw + tRoundNum.getWidth() + 10);
+								setpos[4] = (int)(hw + qw + tDiffVal.getWidth() + 10);
+								setpos[5] = (int)(hh + (Card.prvMap[0].getHeight() - Card.righta.getHeight()) / 2);
+								setpos[6] = (int)(hw + qw + Card.cwid + 10);
+
+								setpos[7] = (int)(hw - tQuickSettings.getWidth() / 2);
+								setpos[8] = (int)(hw - tSettings.getWidth() / 2);
+								setpos[9] = (int)(hw - tDelete.getWidth() / 2);
+								setpos[10] = (int)(hw - tDelConf.getWidth() / 2);
+								setpos[11] = (int)(hw - tNoSave.getWidth() / 2);
+
+								setpos[12] = (int)(hw - (setpos[0] - hw) - Card.lefta.getWidth());
+								setpos[13] = (int)(hw - (setpos[6] - hw) - Card.lefta.getWidth());
+
+								setpos[14] = (int)(hw - tManual.getWidth() / 2);
+								substate = 0;
+								isCChange = bigSet;
+								state = 12;
+							} else {
+								// Pressed the achievements button
+								if(here.playerAcct != null) {
+									if(GoogleSignIn.hasPermissions(here.playerAcct, Games.SCOPE_GAMES_LITE)) {
+										Games.getAchievementsClient(here, here.playerAcct).getAchievementsIntent().addOnSuccessListener(new OnSuccessListener&lt;Intent&gt;() {
+											@Override
+											public void onSuccess(Intent intent) {
+												here.startActivityForResult(intent, 9003);
+											}
+										});
+									} else {
+										GoogleSignIn.requestPermissions(here, 9002, here.playerAcct, Games.SCOPE_GAMES_LITE);
+									}
+								} else {
+									here.gSignIn();
+								}
+							}
+						} else if(tapy &gt; hei - 20 - Card.set.getHeight() && tapx &gt; wid - 30 - Card.set.getWidth() * 2) {
+							if(tapx &gt; wid - 15 - Card.set.getWidth()) {
+								// Pressed the about button
+								state = 14;
+							} else {
+								// Pressed the help button
+								setpos = new int[21];
+								setpos[0] = (int)(hw - tHowTo.getWidth() / 2);
+								setpos[1] = tHowTo.getHeight() / 2 + 30;
+								substate = 0;
+								rulepos = 0;
+								stitchRules();
+								state = 13;
+							}
+						}
+						break;
+					// Intro
+					case 15:
+						if(here.playerAcct == null) here.playerAcct = GoogleSignIn.getLastSignedInAccount(here);
+						if(here.playerAcct != null) here.doView();
+						state = 10;
+						break;
+					// New game
+					case 11:
+						if(tapy &gt; hei - 20 - Card.set.getHeight()) {
+							if (tapx &gt; wid - 15 - Card.set.getWidth()) {
+								// Pressed forward arrow, start game
+								mech = new CapitalMechanics(CapitalView.this, tempPlaySet, tempRoundSet, tempLvlSet);
+								playpos = mech.playpos;
+								mech.start();
+								here.drawerui.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED);
+								state = 4;
+								setpos = null;
+								break;
+							} else if (tapx &lt; 15 + Card.set.getWidth()) {
+								// Pressed back arrow
+								state = 10;
+								setpos = null;
+								break;
+							}
+						} else if(tapy &gt; qh && tapy &lt; qh + tPlayNum.getHeight()) {
+							// Pressed player up/down arrows
+							if(tapx &gt; hw && tapx &lt; hw + qw && tempPlaySet &gt; 4) {
+								tempPlaySet--;
+								tPlayNum = Utils.trim(TextDraw.makeString(tempPlaySet + "", 3));
+							} else if(tapx &gt; setpos[2] - 10 && tempPlaySet &lt; 9) {
+								tempPlaySet++;
+								tPlayNum = Utils.trim(TextDraw.makeString(tempPlaySet + "", 3));
+							}
+						} else if(tapy &gt; hh && tapy &lt; hh + tRoundNum.getHeight()) {
+							// Pressed round number up/down arrows
+							if(tapx &gt; hw && tapx &lt; hw + qw && tempRoundSet &gt; 0) {
+								tempRoundSet--;
+								tRoundNum = Utils.trim(TextDraw.makeString(tempRoundSet + "", 3));
+								if((tempRoundSet + 1) % 10 == 0) setpos[3] = (int)(hw + qw + tRoundNum.getWidth() + 10);
+							} else if(tapx &gt; setpos[3] - 10 && tempRoundSet &lt; 1000) {
+								tempRoundSet++;
+								tRoundNum = Utils.trim(TextDraw.makeString(tempRoundSet + "", 3));
+								if(tempRoundSet % 10 == 0) setpos[3] = (int)(hw + qw + tRoundNum.getWidth() + 10);
+							}
+						} else if(tapy &gt; hh + qh && tapy &lt; hh + qh + tDiffVal.getHeight()) {
+							// Pressed difficulty up/down arrows
+							if(tapx &gt; hw && tapx &lt; hw + qw && tempLvlSet &gt; 0) {
+								tempLvlSet--;
+								tDiffVal = Utils.trim(TextDraw.makeString(AI.DIFFICULTY[tempLvlSet], 3));
+								setpos[4] = (int)(hw + qw + tDiffVal.getWidth() + 10);
+							} else if(tapx &gt; setpos[4] - 10 && tempLvlSet &lt; AI.DIFFICULTY.length - 1) {
+								tempLvlSet++;
+								tDiffVal = Utils.trim(TextDraw.makeString(AI.DIFFICULTY[tempLvlSet], 3));
+								setpos[4] = (int)(hw + qw + tDiffVal.getWidth() + 10);
+							}
+						}
+						break;
+					// Settings
+					case 12:
+						if(tapy &gt; hei - 20 - Card.set.getHeight()) {
+							if (tapx &gt; wid - 15 - Card.set.getWidth() && substate &lt; 2) {
+								// Pressed the next page arrow
+								substate++;
+								isDelConf = false;
+							} else if (tapx &lt; 15 + Card.set.getWidth()) {
+								// Pressed the previous page/exit arrow
+								if(substate &gt; 0) {
+									substate--;
+									isDelConf = false;
+								} else {
+									exitSet();
+								}
+							}
+						} else {
+							switch(substate) {
+								// Quick play settings
+								case 0:
+									if(tapy &gt; qh && tapy &lt; qh + tPlayNum.getHeight()) {
+										// Quick play number of players
+										if(tapx &gt; hw && tapx &lt; hw + qw && playSet &gt; 4) {
+											playSet--;
+											tPlayNum = Utils.trim(TextDraw.makeString(playSet + "", 3));
+										} else if(tapx &gt; setpos[2] - 10 && playSet &lt; 9) {
+											playSet++;
+											tPlayNum = Utils.trim(TextDraw.makeString(playSet + "", 3));
+										}
+									} else if(tapy &gt; hh && tapy &lt; hh + tRoundNum.getHeight()) {
+										// Quick play number of rounds
+										if(tapx &gt; hw && tapx &lt; hw + qw && roundSet &gt; 0) {
+											roundSet--;
+											tRoundNum = Utils.trim(TextDraw.makeString(roundSet + "", 3));
+											if((roundSet + 1) % 10 == 0) setpos[3] = (int)(hw + qw + tRoundNum.getWidth() + 10);
+										} else if(tapx &gt; setpos[3] - 10 && roundSet &lt; 1000) {
+											roundSet++;
+											tRoundNum = Utils.trim(TextDraw.makeString(roundSet + "", 3));
+											if(roundSet % 10 == 0) setpos[3] = (int)(hw + qw + tRoundNum.getWidth() + 10);
+										}
+									} else if(tapy &gt; hh + qh && tapy &lt; hh + qh + tDiffVal.getHeight()) {
+										// Quick play difficulty
+										if(tapx &gt; hw && tapx &lt; hw + qw && lvlSet &gt; 0) {
+											lvlSet--;
+											tDiffVal = Utils.trim(TextDraw.makeString(AI.DIFFICULTY[lvlSet], 3));
+											setpos[4] = (int)(hw + qw + tDiffVal.getWidth() + 10);
+										} else if(tapx &gt; setpos[4] - 10 && lvlSet &lt; AI.DIFFICULTY.length - 1) {
+											lvlSet++;
+											tDiffVal = Utils.trim(TextDraw.makeString(AI.DIFFICULTY[lvlSet], 3));
+											setpos[4] = (int)(hw + qw + tDiffVal.getWidth() + 10);
+										}
+									}
+									break;
+								// Display settings
+								case 1:
+									if(tapy &gt; qh && tapy &lt; qh + tPlayNum.getHeight()) {
+										// Big skip/clear buttons
+										if(tapx &gt; hw + qw && tapx &lt; hw + qw + ew) {
+											bigSet = !bigSet;
+										}
+									} else if(tapy &gt; setpos[5] && tapy &lt; setpos[5] + tRoundNum.getHeight()) {
+										if(tapx &gt; hw && tapx &lt; hw + qw && cardSet &gt; 0) {
+											// Prev card set
+											cardSet--;
+										} else if(tapx &gt; setpos[6] - 10 && cardSet &lt; Card.prvMap.length - 1) {
+											// Next card set
+											cardSet++;
+										} else if(tapx &lt; hw && tapx &gt; qw && bgnum &lt; Card.lbgs.length - 1) {
+											// Next background
+											bgnum++;
+											Resources r = getResources();
+											bground = new BitmapDrawable(r, Card.getBG(r, bgnum));
+											bground.setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
+										} else if(tapx &lt; setpos[13] && bgnum &gt; 0) {
+											// Prev/no background
+											bgnum--;
+											if(bgnum != 0) {
+												Resources r = getResources();
+												bground = new BitmapDrawable(r, Card.getBG(r, bgnum));
+												bground.setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
+											}
+										}
+									}
+									break;
+								// Save settings
+								case 2:
+									if(tapy &gt; hh && tapy &lt; hh + tDelConf.getHeight() && cnt) {
+										// Delete continue data
+										if(isDelConf) {
+											if(saveFile.delete()) {
+												toText = getResources().getString(R.string.savedeleted);
+												AchievementManager.here.reset();
+												cnt = false;
+											} else {
+												toText = getResources().getString(R.string.errordeletingfile);
+											}
+											toDraw = true;
+										} else {
+											isDelConf = true;
+										}
+									} else if(tapy &gt; qh && tapy &lt; qh + tManual.getHeight()) {
+										// Load achievement data
+										AchievementManager.here.getAchievements();
+									}
+									break;
+							}
+						}
+						break;
+					// Help
+					case 13:
+						if(tapy &gt; hei - 20 - Card.set.getHeight()) {
+							if (tapx &gt; wid - 15 - Card.set.getWidth()) {
+								// Next button
+								rulepos += TEXTROWS;
+								stitchRules();
+							} else if (tapx &lt; 15 + Card.set.getWidth()) {
+								// Prev/exit button
+								if(rulepos &gt; 0)
+								{
+									rulepos -= TEXTROWS;
+									stitchRules();
+								} else {
+									state = 10;
+								}
+							}
+						}
+						break;
+					// About
+					case 14:
+						if(tapx &gt; hw + qw - tHandle.getWidth() / 2 && tapx &lt; hw + qw + tHandle.getWidth() / 2 && tapy &gt; hh - Card.eyelogo.getHeight() / 2 && tapy &lt; hh + Card.eyelogo.getHeight() / 2) {
+							here.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://&lt;twitter&gt;")));
+						}
+				}
+			}
+		});
+
+		rotpos = 2;
+		oturn = -10;
+		timer = 0;
+		lasttime = SystemClock.uptimeMillis();
+		checktime = lasttime;
+		state = 15;
+	}
+	
+	/*
+	 * onDraw - Redraw screen
+	 */
+	@Override
+	protected void onDraw(Canvas c) {
+		super.onDraw(c);
+		// Draw the background
+		if(bgnum &gt; 0 && Build.VERSION.SDK_INT &gt;= Build.VERSION_CODES.JELLY_BEAN && (state &lt; 14 || state &gt; 15)) {
+			setBackground(bground);
+		} else {
+			setBackgroundColor(Color.BLACK);
+		}
+		
+		if(state &lt; 9) {
+			// In-game
+			p.setColor(Color.WHITE);
+			
+			// Draw skip and clear buttons
+			if(bigSet) {
+				if(mech.isConf) {
+					c.drawBitmap(Card.bsconf, sxpos, sypos, p);
+				} else {
+					c.drawBitmap(Card.bskip, sxpos, sypos, p);
+				}
+				if(mech.isCConf) {
+					c.drawBitmap(Card.bcconf, cxpos, sypos, p);
+				} else {
+					c.drawBitmap(Card.bclear, cxpos, sypos, p);
+				}
+			} else {
+				if(mech.isConf) {
+					c.drawBitmap(Card.sconf, sxpos, sypos, p);
+				} else {
+					c.drawBitmap(Card.skip, sxpos, sypos, p);
+				}
+				if(mech.isCConf) {
+					c.drawBitmap(Card.cconf, cxpos, sypos, p);
+				} else {
+					c.drawBitmap(Card.clear, cxpos, sypos, p);
+				}
+			}
+			
+			// Draw the player's cards
+			for(byte j = 0; j &lt; mech.cards[0]; j++) {
+				byte pos = mech.hands[0][j];
+				c.drawBitmap(pics[pos].pic, pics[pos].posx, pics[pos].posy, p);
+				if(!pics[pos].issel) c.drawBitmap(Card.shade, pics[pos].posx, pics[pos].posy, p);
+			}
+			
+			// Draw the AI's cards
+			for(byte i = 1; i &lt; mech.players; i++) {
+				if(i == 1 || i == mech.players - 1) {
+					// Cards on sides, draw sideways
+					for(byte j = 0; j &lt; mech.cards[i]; j++) {
+						byte pos = mech.hands[i][j];
+						c.drawBitmap(Card.backh, pics[pos].posx, pics[pos].posy, p);
+					}
+				} else {
+					for(byte j = 0; j &lt; mech.cards[i]; j++) {
+						byte pos = mech.hands[i][j];
+						c.drawBitmap(Card.back, pics[pos].posx, pics[pos].posy, p);
+					}
+				}
+			}
+			
+			// Draw cards on deck
+			for(byte i = 0; i &lt; mech.dcards; i++) {
+				byte pos = mech.deck[i];
+				c.drawBitmap(pics[pos].pic, pics[pos].posx, pics[pos].posy, p);
+			}
+			
+			// Draw win/lose crowns
+			if(mech.pres &gt; -1) {
+				c.drawBitmap(Card.cpres, playpos[mech.pres][0] - Card.cpres.getWidth() / 2, playpos[mech.pres][1] - Card.cpres.getHeight() / 2, p);
+			}
+			if(mech.vpres &gt; -1) {
+				c.drawBitmap(Card.cvpres, playpos[mech.vpres][0] - Card.cpres.getWidth() / 2, playpos[mech.vpres][1] - Card.cpres.getHeight() / 2, p);
+			}
+			if(mech.low &gt; -1) {
+				c.drawBitmap(Card.clow, playpos[mech.low][0] - Card.cpres.getWidth() / 2, playpos[mech.low][1] - Card.cpres.getHeight() / 2, p);
+			}
+			if(mech.vlow &gt; -1) {
+				c.drawBitmap(Card.cvlow, playpos[mech.vlow][0] - Card.cpres.getWidth() / 2, playpos[mech.vlow][1] - Card.cpres.getHeight() / 2, p);
+			}
+			
+			// Draw current turn arrow
+			if(oturn != mech.turn) {
+				float ang = (float)((180 / Math.PI) * Math.atan2((playpos[mech.turn % mech.players][1] - rypos), (playpos[mech.turn % mech.players][0] - hw)));
+				rt.setRotate(ang, Card.pointer.getWidth() / 2, Card.pointer.getHeight() / 2);
+				bt = Bitmap.createBitmap(Card.pointer, 0, 0, Card.pointer.getWidth(), Card.pointer.getHeight(), rt, true);
+				oturn = mech.turn;
+			}
+			c.drawBitmap(bt, hw - bt.getWidth() / 2, rypos - bt.getHeight() / 2, p);
+			
+			// Draw side menu button
+			c.drawBitmap(Card.draw, 10, 10, p);
+			
+			if(state == 3) {
+				// Swap cards, draw rank grid
+				float lc = hw - Card.cwid * 3.5f;
+				float tc = hh - Card.chei;
+				for(byte i = 0; i &lt; 13; i++) {
+					c.drawBitmap(pics[i * 4].pic, lc + Card.cwid * (i % 7), tc + Card.chei * (i / 7), p);
+					if(!mech.isCheck[i]) c.drawBitmap(Card.shade, lc + Card.cwid * (i % 7), tc + Card.chei * (i / 7), p);
+				}
+				c.drawBitmap(Card.back, lc + Card.cwid * 6, tc + Card.chei, p);
+			} else if(state == 4) {
+				// New game, draw "ready?"
+				c.drawBitmap(tReady, (wid - tReady.getWidth()) / 2, (playpos[mech.players - 2][1] + hh) / 2, p);
+			} else if(state == 6) {
+				// Game over transition, draw rotating crown
+				crownBuild();
+				c.drawBitmap(dcs, hw - dcs.getWidth() / 2, hh - dcs.getHeight() / 2, p);
+			} else if(state == 7) {
+				// Game over transition 2, fade in text
+				c.drawBitmap(dcrown, hw - dcrown.getWidth() / 2, hh - dcrown.getHeight() / 2, p);
+				p.setAlpha(mech.vis);
+				c.drawBitmap(tYG, hw - tYG.getWidth() / 2, qh - tYG.getHeight() / 2, p);
+				p.setAlpha(255);
+			} else if(state == 8) {
+				// Game over
+				if(!mech.gameBlank) {
+					c.drawBitmap(dcrown, hw - dcrown.getWidth() / 2, hh - dcrown.getHeight() / 2, p);
+					c.drawBitmap(tYG, hw - tYG.getWidth() / 2, qh - tYG.getHeight() / 2, p);
+				}
+				c.drawBitmap(tKeep, qw - tKeep.getWidth() / 2, hh + qh, p);
+				c.drawBitmap(tQuit, hw + qw - tQuit.getWidth() / 2, hh + qh, p);
+			}
+		} else {
+			// Not in-game
+			switch(state) {
+				case 9:
+					break;
+				// Main menu
+				case 10:
+					// Spinning cards
+					//rcnt bits:
+
+					//sign: NULL
+					//6: NULL
+					//5: out
+					//4: out
+					//3: out
+					//2: out
+					//1: rotations
+					//0: rotations
+
+					//suit bits:
+
+					//sign: NULL
+					//6
+					//5
+					//4
+					//3: in
+					//2: out
+					//1: suit
+					//0: suit
+					
+					// Move cards
+					for(int i = 0; i &lt; 13; i++) {
+						if(suit / 4 == 1) {
+							// Moving cards out
+							if(rcnt / 4 &gt; i) {
+								cardpos[i][0] = (cardpos[i][0] - Card.cwid) / 2;
+								cardpos[i][1] = (cardpos[i][1] - Card.chei) / 2;
+								continue;
+							}
+						} else if(suit / 4 == 2) {
+							// Moving cards in
+							if(rcnt / 4 &lt; i) {
+								cardpos[i][0] = (cardpos[i][0] - Card.cwid) / 2;
+								cardpos[i][1] = (cardpos[i][1] - Card.chei) / 2;
+								continue;
+							}
+						}
+						cardpos[i][0] = (int)(cardpos[i][0] + Math.sin(Math.toRadians(rotpos - i * 20)) * 150 + hw - Card.cwid / 2) / 2;
+						cardpos[i][1] = (int)(cardpos[i][1] - Math.cos(Math.toRadians(rotpos - i * 20)) * 150 + hh - Card.chei / 2) / 2;
+					}
+					rotpos += 2;
+					
+					// Manage swapping suits
+					if(suit / 4 &gt; 0) {
+						if(suit / 4 == 1) {
+							// Moving cards out
+							if(rotpos % 20 == 0) {
+								rcnt += 4;
+								if(rcnt / 4 == 13) {
+									rcnt = 0;
+									rotpos = -20;
+									if(suit % 4 == 3) {
+										suit = 8;
+									} else suit = (byte)(suit % 4 + 9);
+								}
+							}
+						} else if(suit / 4 == 2) {
+							// Moving cards in
+							if(rotpos % 20 == 0) {
+								rcnt += 4;
+								if(rcnt / 4 == 13) {
+									suit = (byte)(suit % 4);
+									rcnt = 0;
+								}
+							}
+						}
+					}
+					
+					// Draw spinning cards
+					for(int i = 0; i &lt; 13; i++) {
+						c.drawBitmap(pics[i * 4 + (suit % 4)].pic, cardpos[i][0], cardpos[i][1], p);
+					}
+					
+					// Count full rotations
+					if(rotpos &gt;= 360) {
+						rotpos = 0;
+						rcnt++;
+						if(rcnt == 4) suit += 4;
+					}
+					
+					// Draw center buttons
+					c.drawBitmap(tMenu, lx, ly + tCont.getHeight(), p);
+					if(cnt) {
+						c.drawBitmap(tCont, (wid - tCont.getWidth()) / 2, ly, p);
+					} else if(spos == 0) spos = -1;
+					if(spos &gt;= 0) c.drawRect(lx, ly + spos * (tMenu.getHeight() / 2), lx + tMenu.getWidth(), ly + (spos + 1) * (tMenu.getHeight() / 2), p);
+					
+					// Draw title
+					c.drawBitmap(Card.title, hw - Card.title.getWidth() / 2, 42, p);
+					
+					// Draw corner buttons
+					c.drawBitmap(Card.set, wid - 10 - Card.set.getWidth(), 10, p);
+					c.drawBitmap((here.playerAcct != null) ? Card.ach : Card.ach2, wid - 20 - Card.set.getWidth() * 2, 10, p);
+					c.drawBitmap(Card.eye, wid - 10 - Card.set.getWidth(), hei - 10 - Card.set.getHeight(), p);
+					c.drawBitmap(Card.help, wid - 20 - Card.set.getWidth() * 2, hei - 10 - Card.set.getHeight(), p);
+					
+					// Draw timing
+					curtime = SystemClock.uptimeMillis() - lasttime;
+					if(curtime &lt; 33) {
+						try {
+							Thread.sleep(33 - curtime);
+						} catch(Exception e) {
+							e.printStackTrace();
+						}
+					}
+					lasttime = SystemClock.uptimeMillis();
+					break;
+				// New game
+				case 11:
+					c.drawBitmap(tNewGame, setpos[5], 10, p);
+
+					c.drawBitmap(tPlay, ew, qh, p);
+					c.drawBitmap(tPlayNum, hw + qw, qh, p);
+					c.drawBitmap(Card.lefta, setpos[0], qh + setpos[1], p);
+					c.drawBitmap(Card.righta, setpos[2], qh + setpos[1], p);
+
+					c.drawBitmap(tRound, ew, hh, p);
+					c.drawBitmap(tRoundNum, hw + qw, hh, p);
+					c.drawBitmap(Card.lefta, setpos[0], hh + setpos[1], p);
+					c.drawBitmap(Card.righta, setpos[3], hh + setpos[1], p);
+
+					c.drawBitmap(tDiff, ew, hh + qh, p);
+					c.drawBitmap(tDiffVal, hw + qw, hh + qh, p);
+					c.drawBitmap(Card.lefta, setpos[0], hh + qh + setpos[1], p);
+					c.drawBitmap(Card.righta, setpos[4], hh + qh + setpos[1], p);
+
+					c.drawBitmap(Card.lft, 10, hei - 10 - Card.set.getHeight(), p);
+					c.drawBitmap(Card.rgt, wid - 10 - Card.set.getWidth(), hei - 10 - Card.set.getHeight(), p);
+					break;
+				// Settings
+				case 12:
+					switch(substate) {
+						// Quick play settings
+						case 0:
+							c.drawBitmap(tQuickSettings, setpos[7], 10, p);
+
+							c.drawBitmap(tPlay, ew, qh, p);
+							c.drawBitmap(tPlayNum, hw + qw, qh, p);
+							c.drawBitmap(Card.lefta, setpos[0], qh + setpos[1], p);
+							c.drawBitmap(Card.righta, setpos[2], qh + setpos[1], p);
+
+							c.drawBitmap(tRound, ew, hh, p);
+							c.drawBitmap(tRoundNum, hw + qw, hh, p);
+							c.drawBitmap(Card.lefta, setpos[0], hh + setpos[1], p);
+							c.drawBitmap(Card.righta, setpos[3], hh + setpos[1], p);
+
+							c.drawBitmap(tDiff, ew, hh + qh, p);
+							c.drawBitmap(tDiffVal, hw + qw, hh + qh, p);
+							c.drawBitmap(Card.lefta, setpos[0], hh + qh + setpos[1], p);
+							c.drawBitmap(Card.righta, setpos[4], hh + qh + setpos[1], p);
+
+							c.drawBitmap(Card.lft, 10, hei - 10 - Card.set.getHeight(), p);
+							c.drawBitmap(Card.rgt, wid - 10 - Card.set.getWidth(), hei - 10 - Card.set.getHeight(), p);
+							break;
+						// Draw settings
+						case 1:
+							c.drawBitmap(tSettings, setpos[8], 10, p);
+
+							c.drawBitmap(tCS, ew, qh, p);
+							c.drawBitmap(bigSet ? Card.checkon : Card.checkoff, hw + qw, qh, p);
+
+							c.drawBitmap(tBC, hw - tBC.getWidth() / 2, qh + eh, p);
+							c.drawBitmap(Card.prvMap[cardSet], hw + qw, hh, p);
+							c.drawBitmap(Card.lefta, setpos[0], setpos[5], p);
+							c.drawBitmap(Card.righta, setpos[6], setpos[5], p);
+							c.drawBitmap(Card.lefta, setpos[13], setpos[5], p);
+							c.drawBitmap(Card.righta, setpos[12], setpos[5], p);
+
+							c.drawBitmap(Card.lft, 10, hei - 10 - Card.set.getHeight(), p);
+							c.drawBitmap(Card.rgt, wid - 10 - Card.set.getWidth(), hei - 10 - Card.set.getHeight(), p);
+							break;
+						// Save settings
+						case 2:
+							c.drawBitmap(tSettings, setpos[8], 10, p);
+
+							if(cnt) {
+								if(isDelConf) {
+									c.drawBitmap(tDelConf, setpos[10], hh, p);
+								} else {
+									c.drawBitmap(tDelete, setpos[9], hh, p);
+								}
+							} else {
+								c.drawBitmap(tNoSave, setpos[11], hh, p);
+							}
+							c.drawBitmap(tManual, setpos[14], qh, p);
+
+							c.drawBitmap(Card.lft, 10, hei - 10 - Card.set.getHeight(), p);
+							break;
+					}
+					break;
+				// Help
+				case 13:
+					if(substate == 0) {
+						c.drawBitmap(tHowTo, setpos[0], 10, p);
+						c.drawBitmap(tRules, 10, setpos[1], p);
+						c.drawBitmap(Card.lft, 10, hei - 10 - Card.set.getHeight(), p);
+						c.drawBitmap(Card.rgt, wid - 10 - Card.set.getWidth(), hei - 10 - Card.set.getHeight(), p);
+					}
+					break;
+				// About
+				case 14:
+					c.drawBitmap(Card.eyelogo, hw - Card.eyelogo.getWidth() / 2, hh - Card.eyelogo.getHeight() / 2, p);
+					c.drawBitmap(tHandle, hw + qw - tHandle.getWidth() / 2, hh - tHandle.getHeight() / 2, p);
+					c.drawBitmap(tCopyright, hw - tCopyright.getWidth() / 2, hei - tCopyright.getHeight(), p);
+					break;
+				// Intro
+				case 15:
+					c.drawBitmap(Card.eyelogo, hw - Card.eyelogo.getWidth() / 2, hh - Card.eyelogo.getHeight() / 2, p);
+					
+					// Handle pause timing
+					timer++;
+					if(timer == 60) state = 10;
+					curtime = SystemClock.uptimeMillis() - lasttime;
+					if(curtime &lt; 33) {
+						try {
+							Thread.sleep(33 - curtime);
+						} catch(Exception e) {
+							e.printStackTrace();
+						}
+					}
+					lasttime = SystemClock.uptimeMillis();
+					isadv = true;
+					break;
+			}
+		}
+		
+		if(toDraw) {
+			// Draw pending toast
+			Toast.makeText(CapitalApp.here.getApplicationContext(), toText, Toast.LENGTH_SHORT).show();
+			if(saveFile.exists()) cnt = true;
+			toDraw = false;
+		}
+		
+		if(doLock) {
+			// Disable side menu
+			drawerui.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
+			doLock = false;
+		}
+		invalidate();
+	}
+	
+	/*
+	 * sendUI - Drawer layout setter
+	 */
+	void sendUI(DrawerLayout dwui) {
+		drawerui = dwui;
+	}
+	
+	/*
+	 * makeSettings - Initializes setting file
+	 * Behavior: Creates the settings file and fills it with default settings data
+	 */
+	void makeSettings() {
+		try {
+			RandomAccessFile sav = new RandomAccessFile(setFile, "rws");
+			//version, players, rounds, rounds, card set, level, bool(big cards, null), background number
+			sav.write(new byte[]{2, 4, 0, 3, 0, 0, 0, 0});
+			sav.close();
+			toText = CapitalApp.here.getResources().getString(R.string.settingsfilecreated);
+			toDraw = true;
+		} catch (Exception e) {
+			e.printStackTrace();
+			toText = CapitalApp.here.getResources().getString(R.string.settingsfilecreationfailed);
+			toDraw = true;
+		}
+	}
+	
+	/*
+	 * saveSet - Saves settings
+	 * Behavior: Writes the current settings to the settings file
+	 */
+	void saveSet() {
+		try {
+			RandomAccessFile sav = new RandomAccessFile(setFile, "rws");
+			byte[] data = new byte[]{2, playSet, 0, 0, cardSet, lvlSet, 0, bgnum}, temp = Utils.split(roundSet);
+			data[2] = temp[0];
+			data[3] = temp[1];
+			data[6] = Utils.store(new boolean[]{bigSet})[0];
+			sav.write(data); //version, players, rounds, rounds, card set, level, bool(big cards, null), background number
+			sav.close();
+			if(bigSet != isCChange) rePos();
+			toText = getResources().getString(R.string.settingssaved);
+			toDraw = true;
+		} catch (Exception e) {
+			e.printStackTrace();
+			toText = getResources().getString(R.string.settingsfilecreationfailed);
+			toDraw = true;
+		}
+	}
+	
+	/*
+	 * exitSet - Applies settings
+	 * Behavior: Saves settings and re-initializes card images
+	 */
+	void exitSet() {
+		saveSet();
+		Card.deinitPrv();
+		Card.initialize(getResources(), cardSet);
+		reSet();
+		state = 10;
+		setpos = null;
+	}
+	
+	/*
+	 * reSet - Re-initializes card images
+	 * Behavior: Requests a redraw of all cards
+	 */
+	void reSet() {
+		for(byte i = 0; i &lt; 52; i++) pics[i].getPic(i);
+	}
+	
+	/*
+	 * rePos - Re-calculates button positions
+	 * Behavior: Re-calculates the positions of the skip and clear buttons
+	 */
+	void rePos() {
+		if(bigSet) {
+			sxpos = (wid / 2) - Card.cwid * 1.75f;
+			sypos = (hei / 2) - Card.chei / 2;
+			cxpos = (wid / 2) + Card.cwid * 0.75f;
+			sxwid = Card.cwid;
+			sxhei = Card.chei;
+		} else {
+			sxpos = (wid / 2) - Card.cwid / 2 - Card.cwid * 0.75f;
+			sypos = (hei / 2) - Card.chei / 2 + Card.chei / 4;
+			cxpos = (wid / 2) - Card.cwid / 2 + Card.cwid * 1.25f;
+			sxwid = Card.skip.getWidth();
+			sxhei = Card.skip.getHeight();
+		}
+	}
+	
+	/*
+	 * stitchRules - Fuses text images
+	 * Behavior: Makes the rules image from a subset of the rules text
+	 */
+	void stitchRules() {
+		Bitmap[] pieces = new Bitmap[TEXTROWS];
+		String[] stra = getResources().getStringArray(R.array.rules);
+		for(byte i = 0; i &lt; TEXTROWS; i++) {
+			if(i + rulepos &lt; stra.length) pieces[i] = TextDraw.makeString(stra[i + rulepos], 2, false);
+		}
+		tRules = Utils.vStitch2(pieces);
+		if(tRules == null) {
+			rulepos -= TEXTROWS;
+			stitchRules();
+		}
+	}
+	
+	/*
+	 * crownApply - Sets the final crown image
+	 * Behavior: Scales the current crown image down
+	 */
+	void crownApply() {
+		dcrown = Bitmap.createScaledBitmap(dcrown, dcrown.getWidth() / 2, dcrown.getHeight() / 2, true);
+	}
+	
+	/*
+	 * crownBuild - "Rotates" the crown image
+	 * Behavior: Makes the horizontally-scaled crown image based on the current scale
+	 */
+	void crownBuild() {
+		scl.reset();
+		float sclwid = (float)Math.sin(Math.toRadians(mech.ang)) / 2;
+		scl.postScale((Math.abs(sclwid) &lt; 0.01f) ? 0.01f : sclwid, 0.5f);
+		dcs = Bitmap.createBitmap(dcrown, 0, 0, dcrown.getWidth(), dcrown.getHeight(), scl, false);
+	}
+}</code>
+		<script src="code.js" type="text/javascript"></script>
+	</body>
 </html>

@@ -10,12 +10,1214 @@
 		<h1 class="center">Restaurant Management System</h1>
 		<p>Restaurant Management System was the result of a weeks-long collaborative project as part of a software engineering class. It includes functionality for making menus, managing waitstaff, and keeping track of tables and orders.</p>
 		<p>As part of the project, I designed the UI and file manager, along with an automated QA test, while a teammate designed the backend. Below is the main UI file.</p>
-		<div class="code">
-			<code class="java"></code>
-			<img src="NitroUI.png" class="center" />
-		</div>
-		<canvas>This page needs WebGL to work!</canvas>
+		<code class="java">package edu.team9.restaurantms;
+
+import java.awt.AlphaComposite;
+import java.awt.Color;
+import java.awt.Container;
+import java.awt.Dimension;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Paint;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.TexturePaint;
+import java.awt.event.KeyEvent;
+import java.awt.event.KeyListener;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseMotionListener;
+import java.awt.event.MouseListener;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+
+import javax.imageio.ImageIO;
+import javax.swing.JFrame;
+import javax.swing.JPanel;
+
+/**
+ * This is the main user interface class. When a new object is created, it brings up a fullscreen interface which serves as the user's window to interact with the program.
+ * @author Andrew H
+ * @version 1.0
+ */
+class NitroUI extends JPanel implements MouseListener, MouseMotionListener, KeyListener {
+	
+	/**
+	 * This is apparently necessary for Swing UIs.
+	 */
+	static final long serialVersionUID = 1l;
+
+	/**
+	 * The overarching states for the UI. Mostly used to figure out how to handle mouse clicks.
+	 * @author Andrew H
+	 */
+	private enum State {
+		NOTHING, TRANSITION, GRID, LIST, TEXTBOX, FOURSQUARE, OVERLAY, DRAWWALL, DRAWTABLE, REMWALL, REMTABLE, SELTABLE
+	}
+
+	/**
+	 * The states for the internal transition timekeeper. Also used to specify custom transitions.
+	 * @author Andrew H
+	 */
+	enum Timepiece {
+		FADEIN, FADEOUT, SLIDELEFT, SLIDERIGHT, INSTANT
+	}
+
+	/**
+	 * The color for the "screen" effect that covers elements behind the current foreground.
+	 */
+	private final Color SCREEN = new Color(Color.DARK_GRAY.getRed(), Color.DARK_GRAY.getGreen(), Color.DARK_GRAY.getBlue(), 225);
+
+	/**
+	 * The message that is displayed when adding a new table for determining capacity.
+	 */
+	private final String CAPACITYMSG = "What is the maximum capacity of this table?";
+
+	/**
+	 * The paint object used for drawing the tiled background.
+	 */
+	private final Paint BACKGROUND;
+
+	/**
+	 * The width and height of the underlying UI buffers.
+	 */
+	static final int UISIZE = 500;
+	
+	/**
+	 * The minimum length of a wall. Also the minimum distance from the mouse to a wall for the wall to be selected.
+	 */
+	private final int MINDIST = 5;
+	
+	/**
+	 * The width and height of a table on the UI.
+	 */
+	private final int TABLESIZE = 80; // KEEP THIS EVEN OR BAD STUFF WILL HAPPEN!!!
+
+	
+	/**
+	 * An image representing the restaurant layout.
+	 */
+	private BufferedImage bgImage;
+	
+	/**
+	 * An image representing the current UI layout.
+	 */
+	private BufferedImage uiImage;
+	
+	/**
+	 * An image representing the previous, outgoing UI layout.
+	 */
+	private BufferedImage outImage;
+	
+	/**
+	 * An image representing an overlay message.
+	 */
+	private BufferedImage overImage;
+	
+	/**
+	 * The current callback object.
+	 */
+	private Callback callPtr;
+	
+	/**
+	 * The stored, secondary callback object to be swapped to when the current activity is done.
+	 */
+	private Callback callPtr2;
+	
+	/**
+	 * The UI window.
+	 */
+	private JFrame overFrame;
+	
+	/**
+	 * The walls of the restaurant's layout.
+	 */
+	private ArrayList&lt;Wall&gt; walls;
+
+	/**
+	 * The UI's current state.
+	 */
+	private State state;
+	
+	/**
+	 * If the UI is transitioning, this is the next state.
+	 */
+	private State nextState;
+	
+	/**
+	 * The current UI transition.
+	 */
+	private TimeKeeper timer;
+	
+	/**
+	 * The current UI layout.
+	 */
+	private Layout layout;
+	
+	/**
+	 * The currently selected wall.
+	 */
+	private Wall remWall;
+	
+	/**
+	 * The last entered string.
+	 */
+	private String lastEntry;
+	
+	/**
+	 * The restaurant backend.
+	 */
+	private Restaurant rs;
+	
+	/**
+	 * The currently selected table.
+	 */
+	private Table selTable;
+	
+	/**
+	 * The currently highlighted table.
+	 */
+	private Table hTable;
+
+	/**
+	 * The currently selected UI button.
+	 */
+	private int downBtn;
+	
+	/**
+	 * The UI's x position, if it's moving.
+	 */
+	private int uiXPos;
+	
+	/**
+	 * The UI's centering x offset.
+	 */
+	private int xOffset;
+	
+	/**
+	 * The UI's centering y offset.
+	 */
+	private int yOffset;
+	
+	/**
+	 * The saved mouse x position, for drawing walls, etc.
+	 */
+	private int clickXPos;
+	
+	/**
+	 * The saved mouse y position, for drawing walls, etc.
+	 */
+	private int clickYPos;
+	
+	/**
+	 * The UI's alpha, if it's fading in or out.
+	 */
+	private float uiAlpha;
+	
+	/**
+	 * The UI's current scale to fit the full screen.
+	 */
+	private float scale;
+	
+	/**
+	 * True if the mouse's button should be counted as down for a mouse event, so as not to trigger a mouse up event after entering a new state.
+	 */
+	private boolean mouseDown;
+
+	/**
+	 * Initializes the drawing spaces and Swing components behind the UI.
+	 * @param r The restaurant class representing the backend data handling object
+	 */
+	NitroUI(Restaurant r) {
+		System.setProperty("sun.java2d.opengl", "true");
+		rs = r;
+		state = State.NOTHING;
+		uiAlpha = 1;
+		mouseDown = false;
+		walls = BinaryIO.readWalls();
+		rs.setTables(BinaryIO.readTables());
+		rs.setInventory(BinaryIO.readItems());
+		rs.setInventoryStats(BinaryIO.readStats());
+		BufferedImage temp = new BufferedImage(1, 1, BufferedImage.TYPE_4BYTE_ABGR);
+		try {
+			temp = ImageIO.read(new File("background.png"));
+		} catch (IOException e) {
+			System.err.println("Background file not found!");
+			System.exit(1);
+		} finally {
+			BACKGROUND = new TexturePaint(temp, new Rectangle(32, 32));
+		}
+
+		overFrame = new JFrame("Restaurant Management System");
+		Container overContain = overFrame.getContentPane();
+		overContain.add(this);
+		setFocusable(true);
+		addMouseListener(this);
+		addMouseMotionListener(this);
+		addKeyListener(this);
+
+		redraw();
+
+		uiImage = new BufferedImage(UISIZE, UISIZE, BufferedImage.TYPE_4BYTE_ABGR);
+		Graphics2D g = uiImage.createGraphics();
+		g.setBackground(SCREEN);
+		g.clearRect(0, 0, UISIZE, UISIZE);
+
+		setPreferredSize(new Dimension(UISIZE, UISIZE));
+		overFrame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+		overFrame.setExtendedState(JFrame.MAXIMIZED_BOTH);
+		overFrame.setUndecorated(true);
+		//overFrame.pack();
+		//overFrame.setLocation(600, 200);
+		overFrame.setResizable(false);
+		overFrame.setVisible(true);
+
+		int wid = overFrame.getWidth(), hei = overFrame.getHeight();
+		if(wid &gt; hei) {
+			scale = (float)hei / UISIZE;
+			xOffset = (wid - hei) / 2;
+			yOffset = 0;
+		}
+
+		setOpaque(true);
+		new Refresh().start();
+	}
+	
+	/**
+	 * Ends the program and saves all data.
+	 */
+	void exit() {
+		BinaryIO.writeWalls(walls);
+		BinaryIO.writeTables(rs.getTables());
+		BinaryIO.writeItems(rs.getInventory());
+		BinaryIO.writeStats(rs.getInventoryStats());
+		System.exit(0);
+	}
+
+	/**
+	 * Replaces the current menu with a grid of buttons.
+	 * @param ptr An object containing the method to be called when a button is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param d The arrows to include on the bottom of the layout
+	 * @param wid The number of buttons per row
+	 * @param hei The number of buttons per column
+	 */
+	void drawGrid(Callback ptr, Timepiece t, Layout.Direction d, int wid, int hei) {
+		callPtr = ptr;
+
+		outImage = uiImage;
+		uiXPos = UISIZE;
+		layout = new GridLayout(d, wid, hei);
+		uiImage = layout.render();
+
+		state = State.TRANSITION;
+		nextState = State.GRID;
+		doTransition(t);
+	}
+
+	/**
+	 * Replaces the current menu with a grid of buttons. This version displays text on the buttons.
+	 * @param ptr An object containing the method to be called when a button is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param d The arrows to include on the bottom of the layout
+	 * @param wid The number of buttons per row
+	 * @param hei The number of buttons per column
+	 * @param text The text to be displayed on the buttons
+	 */
+	void drawGrid(Callback ptr, Timepiece t, Layout.Direction d, int wid, int hei, String ... text) {
+		callPtr = ptr;
+
+		outImage = uiImage;
+		uiXPos = UISIZE;
+		layout = new GridLayout(d, wid, hei, text);
+		uiImage = layout.render();
+
+		state = State.TRANSITION;
+		nextState = State.GRID;
+		doTransition(t);
+	}
+
+	/**
+	 * Replaces the current UI with a vertical list of buttons.
+	 * @param ptr An object containing the method to be called when a button is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param d The arrows to include on the bottom of the layout
+	 * @param text The text to be displayed on each button
+	 */
+	void drawList(Callback ptr, Timepiece t, Layout.Direction d, String ... text) {
+		callPtr = ptr;
+
+		outImage = uiImage;
+		uiXPos = UISIZE;
+		layout = new ListLayout(d, text);
+		uiImage = layout.render();
+
+		state = State.TRANSITION;
+		nextState = State.GRID;
+		doTransition(t);
+	}
+	
+	/**
+	 * Replaces the current UI with a vertical list of buttons. This version takes two arrays: one for text on the left, and one for text on the right.
+	 * @param ptr An object containing the method to be called when a button is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param d The arrows to include on the bottom of the layout
+	 * @param text The text to be displayed on the left side each button
+	 * @param augtext The text to be displayed on the right side of each button
+	 */
+	void drawList(Callback ptr, Timepiece t, Layout.Direction d, String[] text, String[] augtext) {
+		callPtr = ptr;
+
+		outImage = uiImage;
+		uiXPos = UISIZE;
+		layout = new ListLayout(d, text, augtext);
+		uiImage = layout.render();
+
+		state = State.TRANSITION;
+		nextState = State.GRID;
+		doTransition(t);
+	}
+
+	/**
+	 * Replaces the current UI with a horizontally scrollable vertical list of buttons.
+	 * @param ptr An object containing the method to be called when a button is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param text the text to be displayed on each button
+	 */
+	void drawLongList(Callback ptr, Timepiece t, String ... text) {
+		new SuperCallback(ptr, t, text);
+	}
+	
+	/**
+	 * Replaces the current UI with a horizontally scrollable vertical list of buttons. This version takes two arrays.
+	 * @param ptr An object containing the method to be called when a button is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param text the text to be displayed on each button
+	 * @param auxtext The text to be displayed on the right side of each button
+	 */
+	void drawLongList(Callback ptr, Timepiece t, String[] text, String[] auxtext) {
+		new SuperCallback(ptr, t, text, auxtext);
+	}
+
+	/**
+	 * Replaces the current UI with a foursquare layout of buttons.
+	 * @param ptr An object containing the method to be called when a button is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param ui the button layout to use
+	 * @param text the text to be displayed on each button
+	 */
+	void drawFourSquare(Callback ptr, Timepiece t, FourSquareLayout.ButtonLayout ui, String ... text) {
+		callPtr = ptr;
+
+		outImage = uiImage;
+		uiXPos = UISIZE;
+		layout = new FourSquareLayout(ui, text);
+		uiImage = layout.render();
+
+		state = State.TRANSITION;
+		nextState = State.GRID;
+		doTransition(t);
+	}
+
+	/**
+	 * Replaces the current UI with a text input.
+	 * @param ptr An object containing the method to be called when the enter key is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param message The message to be displayed over the text input
+	 * @param isNum True if the input should only accept a whole number
+	 */
+	void drawTextBox(Callback ptr, Timepiece t, String message, boolean isNum) {
+		callPtr = ptr;
+
+		outImage = uiImage;
+		uiXPos = UISIZE;
+		layout = new TextLayout(message, isNum);
+		uiImage = layout.render();
+
+		state = State.TRANSITION;
+		nextState = State.TEXTBOX;
+		doTransition(t);
+	}
+	
+	/**
+	 * Replaces the current UI with a text input. This version includes an escape button, meant for "back", "cancel", etc.
+	 * @param ptr an object containing the method to be called when the escape button or enter key is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param message The message to be displayed over the text input
+	 * @param backmsg The message to be displayed on the lower escape button
+	 * @param isNum True if the input should only accept a whole number
+	 */
+	void drawTextBox(Callback ptr, Timepiece t, String message, String backmsg, boolean isNum) {
+		drawTextBox(ptr, t, message, backmsg, isNum, false);
+	}
+	
+	/**
+	 * Replaces the current UI with a text input. This version includes an escape button, and can also accept a period with numeric input, allowing for decimal inputs.
+	 * @param ptr an object containing the method to be called when the escape button or enter key is pressed
+	 * @param t The transition to use between the previous layout and this new one
+	 * @param message The message to be displayed over the text input
+	 * @param backmsg The message to be displayed on the lower escape button
+	 * @param isNum True if the input should only accept a number
+	 * @param isDouble True if the numeric input should accept periods
+	 */
+	void drawTextBox(Callback ptr, Timepiece t, String message, String backmsg, boolean isNum, boolean isDouble) {
+		callPtr = ptr;
+
+		outImage = uiImage;
+		uiXPos = UISIZE;
+		layout = new TextLayout(message, backmsg, isNum, isDouble);
+		uiImage = layout.render();
+
+		state = State.TRANSITION;
+		nextState = State.TEXTBOX;
+		doTransition(t);
+	}
+	
+	/**
+	 * Gets the last input of the current text layout.
+	 * @return A string representing the characters entered in the text layout.
+	 */
+
+	String getLastEntry() {
+		return lastEntry;
+	}
+	
+	/**
+	 * Displays a message over the current layout. The message will persist until it is exited with a mouse click.
+	 * Note that if this it to be used while simultaneously changing layouts, it must be called AFTER the layout change is called.
+	 * @param text The message to be displayed
+	 */
+
+	void displayMessage(String text) {
+		if(state != State.TRANSITION) {
+			nextState = state;
+		}
+		state = State.OVERLAY;
+		overImage = new BufferedImage(UISIZE, UISIZE, BufferedImage.TYPE_4BYTE_ABGR);
+		Graphics2D g = overImage.createGraphics();
+		Layout.prepGraphics(g);
+		Layout.drawStringCentered(g, text, 0, 0, UISIZE, UISIZE);
+		repaint();
+	}
+	
+	/**
+	 * Hides the layout overlay and changes to wall drawing mode. The drawing is handled completely by the UI.
+	 * @param ptr An object containing the method to be called when the spacebar is pressed
+	 */
+
+	void startDrawWall(Callback ptr) {
+		callPtr = ptr;
+		state = State.TRANSITION;
+		nextState = State.DRAWWALL;
+		doTransition(Timepiece.FADEOUT);
+	}
+	
+	/**
+	 * Hides the layout overlay and changes to wall removing mode. The removal is handled completely by the UI.
+	 * @param ptr An object containing the method to be called when the spacebar is pressed
+	 */
+
+	void startRemoveWall(Callback ptr) {
+		callPtr = ptr;
+		state = State.TRANSITION;
+		nextState = State.REMWALL;
+		doTransition(Timepiece.FADEOUT);
+	}
+	
+	/**
+	 * Hides the layout overlay and changes to table drawing mode. The drawing is handled completely by the UI.
+	 * @param ptr An object containing the method to be called when the spacebar is pressed
+	 */
+
+	void startDrawTable(Callback ptr) {
+		callPtr = ptr;
+		state = State.TRANSITION;
+		nextState = State.DRAWTABLE;
+		doTransition(Timepiece.FADEOUT);
+	}
+	
+	/**
+	 * Hides the layout overlay and changes to table removing mode. The removal is handled completely by the UI.
+	 * @param ptr An object containing the method to be called when the spacebar is pressed
+	 */
+	
+	void startRemoveTable(Callback ptr) {
+		callPtr = ptr;
+		state = State.TRANSITION;
+		nextState = State.REMTABLE;
+		doTransition(Timepiece.FADEOUT);
+	}
+	
+	/**
+	 * Hides the layout overlay and changes to table selecting mode.
+	 * @param ptr An object containing the method to be called when a table is selected or the spacebar is pressed
+	 */
+	void startSelectTable(Callback ptr) {
+		callPtr = ptr;
+		hTable = null;
+		state = State.TRANSITION;
+		nextState = State.SELTABLE;
+		doTransition(Timepiece.FADEOUT);
+	}
+	
+	/**
+	 * Hides the layout overlay and changes to table selecting mode. This version highlights a specified table.
+	 * @param ptr An object containing the method to be called when a table is selected or the spacebar is pressed
+	 */
+	void startSelectTable(Callback ptr, Table t) {
+		callPtr = ptr;
+		hTable = t;
+		state = State.TRANSITION;
+		nextState = State.SELTABLE;
+		doTransition(Timepiece.FADEOUT);
+	}
+	
+	/**
+	 * Clears the current text layout's input.
+	 */
+	void clearLayout() {
+		if(state == State.TEXTBOX || nextState == State.TEXTBOX) {
+			TextLayout tl = (TextLayout)layout;
+			tl.clear();
+		}
+	}
+
+	/**
+	 * Contains the instructions to redraw the UI.
+	 * This should not be called. Instead, redraw() should be called.
+	 */
+	@Override
+	public void paintComponent(Graphics g) {
+		Graphics2D g2 = (Graphics2D)g;
+		super.paintComponent(g2);
+
+		g2.scale(scale, scale);
+		int xoff = (int)(xOffset / scale);
+		int yoff = (int)(yOffset / scale);
+		if(bgImage != null) g2.drawImage(bgImage, xoff, yoff, null);
+		if((state == State.TRANSITION || state == State.OVERLAY) && timer != null) {
+			switch(timer.timeState) {
+				case SLIDELEFT:
+					int uix = uiXPos + xoff;
+					if(uiImage != null) g2.drawImage(uiImage, uix, yoff, null);
+					if(outImage != null) g2.drawImage(outImage, uix - UISIZE, yoff, null);
+					break;
+				case SLIDERIGHT:
+					uix = xoff - uiXPos;
+					if(uiImage != null) g2.drawImage(uiImage, uix, yoff, null);
+					if(outImage != null) g2.drawImage(outImage, uix + UISIZE, yoff, null);
+					break;
+				case FADEIN:
+				case FADEOUT:
+					g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, uiAlpha));
+					if(uiImage != null) g2.drawImage(uiImage, xoff, yoff, null);
+					g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC));
+					break;
+				default: break;
+			}
+		} else if(!(state == State.DRAWWALL || state == State.DRAWTABLE || state == State.REMWALL || state == State.REMTABLE || state == State.SELTABLE || (state == State.OVERLAY && (nextState == State.DRAWWALL || nextState == State.DRAWTABLE || nextState == State.REMWALL || nextState == State.REMTABLE || nextState == State.SELTABLE)))) {
+			if(uiImage != null) g2.drawImage(uiImage, xoff, yoff, null);
+		}
+		if(overImage != null) g2.drawImage(overImage, xoff, yoff, null);
+		
+		if(state == State.SELTABLE && hTable != null) {
+			g2.setColor(Layout.HIGHLIGHT);
+			g2.drawRect(hTable.getPos_x() - TABLESIZE / 2 + xoff, hTable.getPos_y() - TABLESIZE / 2 + yoff, TABLESIZE, TABLESIZE);
+		}
+		
+		g2.setColor(Layout.DRAW);
+		
+		if(mouseDown) {
+			Point p = getMousePosition();
+			int mxp = (int)(p.getX() / scale);
+			int myp = (int)(p.getY() / scale);
+
+			if(state == State.DRAWWALL) {
+				g2.drawLine(clickXPos + xoff, clickYPos + yoff, mxp, myp);
+			} else if(state == State.REMWALL && remWall != null) {
+				g2.setColor(Color.RED);
+				g2.drawLine(remWall.startx + xoff, remWall.starty + yoff, remWall.endx + xoff, remWall.endy + yoff);
+				g2.setColor(Layout.DRAW);
+			} else if((state == State.REMTABLE || state == State.SELTABLE) && selTable != null) {
+				g2.setColor(Color.RED);
+				g2.drawRect(selTable.getPos_x() - TABLESIZE / 2 + xoff, selTable.getPos_y() - TABLESIZE / 2 + yoff, TABLESIZE, TABLESIZE);
+				g2.setColor(Layout.DRAW);
+			} else if(state == State.DRAWTABLE) {
+				g2.drawRect(mxp - TABLESIZE / 2, myp - TABLESIZE / 2, TABLESIZE, TABLESIZE);
+			}
+		}
+
+		if(state == State.TEXTBOX) {
+			TextLayout tl = (TextLayout)layout;
+			FontMetrics fm = g2.getFontMetrics();
+			Layout.drawStringCentered(g2, tl.getText(), xoff, yoff, UISIZE, UISIZE);
+			int cxpos = (UISIZE - fm.stringWidth(tl.getText())) / 2 + fm.stringWidth(tl.getCurText()) + xoff;
+			int cypos = (UISIZE - fm.getAscent()) / 2 + yoff;
+			g2.drawLine(cxpos, cypos, cxpos, cypos + fm.getAscent());
+		}
+
+		if(yOffset == 0) {
+			g2.fillRect(0, 0, xoff, UISIZE);
+			g2.fillRect(xoff + UISIZE, 0, xoff + 1, UISIZE); // Noodle-y, may need fixing later
+		} else {
+			g2.fillRect(0, 0, UISIZE, yoff);
+			g2.fillRect(0, yoff + UISIZE, UISIZE, yoff + 1);
+		}
+	}
+
+	/**
+	 * Invoked when the mouse is clicked while in the UI. This is never used.
+	 */
+	@Override
+	@Deprecated
+	public void mouseClicked(MouseEvent e) {}
+
+	/**
+	 * Invoked when a mouse button is pressed down while in the UI. This should never be called.
+	 */
+	@Override
+	public void mousePressed(MouseEvent e) {
+		if(e.getButton() != MouseEvent.BUTTON1) return;
+		
+		if(state == State.OVERLAY) {
+			overImage = null;
+			state = nextState;
+			downBtn = -1;
+			repaint();
+			return;
+		}
+
+		if(state == State.DRAWWALL || state == State.DRAWTABLE) {
+			clickXPos = (int)((e.getX() - xOffset) / scale);
+			clickYPos = (int)((e.getY() - yOffset) / scale);
+			mouseDown = true;
+			repaint();
+			return;
+		}
+
+		if(state == State.REMWALL) {
+			clickXPos = (int)((e.getX() - xOffset) / scale);
+			clickYPos = (int)((e.getY() - yOffset) / scale);
+			mouseDown = true;
+
+			remWall = null;
+			float dist = MINDIST;
+			for(Wall w: walls) {
+				float nd = w.distanceTo(clickXPos, clickYPos);
+				if(nd &lt; dist) {
+					remWall = w;
+					dist = nd;
+				}
+			}
+			if(remWall != null) repaint();
+			return;
+		}
+		
+		if(state == State.REMTABLE || state == State.SELTABLE) {
+			clickXPos = (int)((e.getX() - xOffset) / scale);
+			clickYPos = (int)((e.getY() - yOffset) / scale);
+			mouseDown = true;
+
+			selTable = null;
+			float dist = TABLESIZE / 2;
+			for(int i = 1; i &lt;= rs.numOfTables(); i++) {
+				Table t = rs.getTable(i);
+				float nd = (float)Math.hypot(clickXPos - t.getPos_x(), clickYPos - t.getPos_y());
+				if(nd &lt; dist) {
+					selTable = t;
+					dist = nd;
+				}
+			}
+			if(selTable != null) repaint();
+			return;
+		}
+
+		if(state != State.TRANSITION && layout != null) {
+			downBtn = layout.getPos((int)((e.getX() - xOffset) / scale), (int)((e.getY() - yOffset) / scale));
+		} else downBtn = -1;
+	}
+
+	/**
+	 * Invoked when a mouse button is released while in the UI. This should never be called.
+	 */
+	@Override
+	public void mouseReleased(MouseEvent e) {
+		if(e.getButton() != MouseEvent.BUTTON1) return;
+		
+		if(state == State.DRAWWALL) {
+			if(!mouseDown) return;
+			int x = (int)((e.getX() - xOffset) / scale);
+			int y = (int)((e.getY() - yOffset) / scale);
+			if((clickXPos != x || clickYPos != y) && Math.hypot(clickXPos - x, clickYPos - y) &gt; MINDIST) {
+				Wall w = new Wall(clickXPos, clickYPos, x,y);
+				Graphics2D g = bgImage.createGraphics();
+				g.setColor(Color.BLACK);
+				g.drawLine(clickXPos, clickYPos, x, y);
+				walls.add(w);
+			}
+			mouseDown = false;
+			repaint();
+			return;
+		}
+
+		if(state == State.REMWALL) {
+			if(mouseDown && remWall != null) {
+				walls.remove(remWall);
+				mouseDown = false;
+				redraw();
+			}
+			return;
+		}
+
+		if(state == State.DRAWTABLE) {
+			if(!mouseDown) return;
+			callPtr2 = callPtr;
+			clickXPos = (int)((e.getX() - xOffset) / scale);
+			clickYPos = (int)((e.getY() - yOffset) / scale);
+			drawTextBox(new Callback(){
+				@Override
+				public void onCallback(int selection) {
+					if(selection &gt; 0 && getLastEntry() != null && !getLastEntry().equals("")) {
+						rs.addTable(selection);
+						Table t = rs.getTable(rs.numOfTables());
+						t.setPos_x(clickXPos);
+						t.setPos_y(clickYPos);
+						drawTable(bgImage.createGraphics(), t, clickXPos, clickYPos);
+					} else if(selection == -3 || selection == 0) {
+						displayMessage("Please input a valid number");
+						return;
+					}
+					startDrawTable(callPtr2);
+				}
+			}, Timepiece.FADEIN, CAPACITYMSG, "Cancel", true);
+			mouseDown = false;
+			return;
+		}
+		
+		if(state == State.REMTABLE) {
+			if(mouseDown && selTable != null) {
+				for(int i = 1; i &lt;= rs.numOfTables(); i++) {
+					Table t = rs.getTable(i);
+					if(t == selTable) {
+						rs.remTable(i);
+						break;
+					}
+				}
+				redraw();
+			}
+			mouseDown = false;
+			return;
+		}
+		
+		if(state == State.SELTABLE) {
+			if(mouseDown && selTable != null) {
+				callPtr.onCallback(selTable.getNum());
+				redraw();
+			}
+			mouseDown = false;
+			return;
+		}
+		
+		int pos;
+		if(downBtn == -1) return;
+		pos = layout.getPos((int)((e.getX() - xOffset) / scale), (int)((e.getY() - yOffset) / scale));
+		if(downBtn == pos) {
+			if(callPtr != null) callPtr.onCallback(pos);
+		}
+	}
+
+	/**
+	 * Redraws the entire restaurant layout layer. This should be called when a table is added or changed or anything is removed.
+	 */
+	void redraw() {
+		bgImage = new BufferedImage(UISIZE, UISIZE, BufferedImage.TYPE_4BYTE_ABGR);
+		Graphics2D g = bgImage.createGraphics();
+		g.setPaint(BACKGROUND);
+		g.fillRect(0, 0, UISIZE, UISIZE);
+
+		g.setColor(Layout.DRAW);
+		for(Wall w: walls) {
+			g.drawLine(w.startx, w.starty, w.endx, w.endy);
+		}
+		
+		for(int i = 1; i &lt;= rs.numOfTables(); i++) {
+			Table t = rs.getTable(i);
+			drawTable(g, t, t.getPos_x(), t.getPos_y());
+		}
+		
+		repaint();
+	}
+	
+	/**
+	 * Draws a table on the restaurant layer.
+	 * @param g The graphics object for the restaurant layer.
+	 * @param t The table to be drawn.
+	 * @param x The x position of the table.
+	 * @param y The y position of the table.
+	 */
+	private void drawTable(Graphics2D g, Table t, int x, int y) {
+		FontMetrics fm = g.getFontMetrics();
+		Layout.drawFilledRect(g, x - TABLESIZE / 2, y - TABLESIZE / 2, TABLESIZE, TABLESIZE);
+		int txpos = x - TABLESIZE / 2 + Layout.SPACING;
+		int typos = y - TABLESIZE / 2 + Layout.SPACING + fm.getAscent();
+		g.drawString("#" + t.getNum() + "   " + (int)(t.getSeatTime()) + " min", txpos, typos);
+		g.drawString(t.getCur_capacity() + " / " + t.getMax_capacity(), txpos, typos + fm.getHeight());
+		g.drawString("$" + String.format("%10.2f", t.calcDue()), txpos, typos + fm.getHeight() * 2);
+		g.drawString("Staff: " + t.getStaff(), txpos, typos + fm.getHeight() * 3);
+		
+	}
+
+	/**
+	 * Invoked when the mouse enters the UI. This is never used.
+	 */
+	@Override
+	@Deprecated
+	public void mouseEntered(MouseEvent e) {}
+
+	/**
+	 * Invoked when the mouse exits the UI. This is never used.
+	 */
+	@Override
+	@Deprecated
+	public void mouseExited(MouseEvent e) {}
+
+	/**
+	 * Invoked when the mouse is moved while a button is held down. This should never be called.
+	 */
+	@Override
+	public void mouseDragged(MouseEvent e) {
+		if(e.getButton() != MouseEvent.BUTTON1) return;
+		
+		if(state == State.DRAWWALL) {
+			repaint();
+			return;
+		}
+		if(state == State.DRAWTABLE) {
+			clickXPos = (int)((e.getX() - xOffset) / scale);
+			clickYPos = (int)((e.getY() - yOffset) / scale);
+			repaint();
+			return;
+		}
+		if(state == State.REMWALL && remWall != null) {
+			if(remWall.distanceTo((e.getX() - xOffset) / scale, (e.getY() - yOffset) / scale) &gt; MINDIST) {
+				remWall = null;
+				repaint();
+			}
+		}
+	}
+
+	/**
+	 * Invoked when the mouse is moved over the UI. This is never used.
+	 */
+	@Override
+	@Deprecated
+	public void mouseMoved(MouseEvent e) {}
+
+	/**
+	 * Invoked when a key is pressed. This should never be called.
+	 */
+	@Override
+	public void keyPressed(KeyEvent e) {
+		if(e.getKeyCode() == KeyEvent.VK_ESCAPE) exit();
+		if(state != State.TEXTBOX) return;
+		((TextLayout)layout).doKey(e);
+		repaint();
+	}
+
+	/**
+	 * Invoked when a key is released. This should never be called.
+	 */
+	@Override
+	public void keyReleased(KeyEvent e) {
+		if(state == State.TEXTBOX && e.getKeyCode() == KeyEvent.VK_ENTER) {
+			TextLayout tl = (TextLayout)layout;
+			lastEntry = tl.getText();
+			int num = 0;
+			if(tl.isNum) {
+				try {
+					num = Integer.parseInt(tl.getText());
+				} catch(NumberFormatException e2) {
+					if(tl.getText().equals("")) {
+						num = -3;
+					} else num = Integer.MAX_VALUE;
+				}
+			}
+			callPtr.onCallback(num);
+		}
+		if((state == State.DRAWWALL || state == State.REMWALL || state == State.SELTABLE || state == State.DRAWTABLE || state == State.REMTABLE) && e.getKeyCode() == KeyEvent.VK_SPACE) {
+			callPtr.onCallback(0);
+		}
+	}
+
+	/**
+	 * Invoked when a key is typed. This is never used.
+	 */
+	@Override
+	@Deprecated
+	public void keyTyped(KeyEvent e) {}
+
+	/**
+	 * Starts a transition between layouts.
+	 * @param t The transition to use.
+	 */
+	private void doTransition(Timepiece t) {
+		switch(t) {
+			case FADEIN:
+				uiAlpha = 0;
+				break;
+			case FADEOUT:
+				uiAlpha = 1;
+				break;
+			default: break;
+		}
+		new TimeKeeper(t).start();
+	}
+
+	/**
+	 * This class starts a timed transition between layouts.
+	 * @author Andrew H
+	 */
+	private class TimeKeeper extends Thread {
+
+		/**
+		 * The number of milliseconds between frames.
+		 */
+		private static final int SKIPTIME = 10;
+		
+		/**
+		 * The amount of alpha change between frames.
+		 */
+		private static final float ALPHASPEED = 0.05f;
+		
+		/**
+		 * The amount of movement between frames.
+		 */
+		private static final float MOVESCALE = 0.9f;
+
+		
+		/**
+		 * The transition being implemented.
+		 */
+		private Timepiece timeState;
+		
+		/**
+		 * The timestamp of the previous frame.
+		 */
+		private long pretime;
+
+		/**
+		 * Creates a new transition, but does not start it.
+		 * @param s The transition to implement
+		 */
+		private TimeKeeper(Timepiece s) {
+			timeState = s;
+			timer = this;
+			mouseDown = false;
+		}
+		
+		/**
+		 * Changes the state of the UI.
+		 */
+		private void doState() {
+			if(state == NitroUI.State.TRANSITION) {
+				state = nextState;
+			}
+		}
+
+		/**
+		 * Starts the transition. This should not be called. Instead, start() should be called.
+		 */
+		@Override
+		public void run() {
+			pretime = System.currentTimeMillis();
+			while(true) {
+				switch(timeState) {
+					// EVERY CASE NEEDS A RETURN STATEMENT!!!
+					// REPAINT IF SOMETHING ONSCREEN CHANGED!!!
+					default: return;
+					case FADEIN:
+						float tempAlpha = uiAlpha + ALPHASPEED;
+						if(tempAlpha &gt; 1) {
+							uiAlpha = 1;
+							doState();
+							repaint();
+							return;
+						}
+						uiAlpha = tempAlpha;
+						repaint();
+						break;
+					case FADEOUT:
+						tempAlpha = uiAlpha - ALPHASPEED;
+						if(tempAlpha &lt; 0) {
+							uiAlpha = 0;
+							doState();
+							repaint();
+							return;
+						}
+						uiAlpha = tempAlpha;
+						repaint();
+						break;
+					case SLIDELEFT:
+					case SLIDERIGHT:
+						uiXPos *= MOVESCALE;
+						if(uiXPos == 0) {
+							doState();
+							repaint();
+							return;
+						}
+						repaint();
+						break;
+				}
+				pretime += SKIPTIME;
+				long sleeptime = pretime - System.currentTimeMillis();
+				if(sleeptime &gt; 0) {
+					try {
+						sleep(sleeptime);
+					} catch (InterruptedException e) {
+						System.err.println(e.getMessage());
+						e.printStackTrace();
+						System.exit(0);
+					}
+				}
+			}
+		}
+	}
+	
+	/**
+	 * This class refreshes the UI every 5 seconds, in order to update time values.
+	 * @author Andrew H
+	 */
+	private class Refresh extends Thread {
+		@Override
+		public void run() {
+			while(true) {
+				try {
+					sleep(5000);
+				} catch(InterruptedException e) {
+					e.printStackTrace();
+				}
+				redraw();
+			}
+		}
+	}
+
+	/**
+	 * This class facilitates the scrolling of long lists.
+	 * @author Andrew H
+	 */
+	private class SuperCallback implements Callback {
+
+		/**
+		 * The callback to be called when a selection is made or the layout is backed out of.
+		 */
+		private Callback subCallback;
+		
+		/**
+		 * The full list of strings to be displayed on the left side of buttons.
+		 */
+		private String[] text;
+		
+		/**
+		 * The full list of strings to be displayed on the right side of buttons.
+		 */
+		private String[] auxtext;
+
+		/**
+		 * The current page of buttons.
+		 */
+		private int pos;
+		
+		/**
+		 * The number of pages of buttons.
+		 */
+		private int wid;
+
+		/**
+		 * Creates a callback which can scroll through lists of buttons.
+		 * @param c An object containing the method to be called when a button is pressed
+		 * @param ti The transition to use between the previous layout and the first list of buttons
+		 * @param t The full list of strings to be displayed
+		 */
+		private SuperCallback(Callback c, Timepiece ti, String[] t) {
+			if(t.length &lt;= ListLayout.MAXLIST) {
+				drawList(c, ti, Layout.Direction.LEFT, t);
+				return;
+			}
+			subCallback = c;
+			text = t;
+			auxtext = null;
+			pos = 0;
+			wid = text.length / ListLayout.MAXLIST;
+
+			String[] textBlock = new String[ListLayout.MAXLIST];
+			System.arraycopy(text, 0, textBlock, 0, ListLayout.MAXLIST);
+			drawList(this, ti, Layout.Direction.BOTH, textBlock);
+		}
+		
+		/**
+		 * Creates a callback which can scroll through lists of buttons. This version has text on both sides of buttons.
+		 * @param c An object containing the method to be called when a button is pressed
+		 * @param ti The transition to use between the previous layout and the first list of buttons
+		 * @param t The full list of strings to be displayed on the left sides of buttons
+		 * @param at The full list of strings to be displayed on the right sides of buttons
+		 * @throws IllegalArgumentException If the list of strings for the left and right sides of the buttons are different lengths.
+		 */
+		private SuperCallback(Callback c, Timepiece ti, String[] t, String[] at) {
+			if(t.length != at.length) throw new IllegalArgumentException("List and auxillary list of different lengths!");
+			if(t.length &lt;= ListLayout.MAXLIST) {
+				drawList(c, ti, Layout.Direction.LEFT, t, at);
+				return;
+			}
+			subCallback = c;
+			text = t;
+			auxtext = at;
+			pos = 0;
+			wid = text.length / ListLayout.MAXLIST;
+
+			String[] textBlock = new String[ListLayout.MAXLIST];
+			System.arraycopy(text, 0, textBlock, 0, ListLayout.MAXLIST);
+			String[] auxTextBlock = new String[ListLayout.MAXLIST];
+			System.arraycopy(auxtext, 0, auxTextBlock, 0, ListLayout.MAXLIST);
+			drawList(this, ti, Layout.Direction.BOTH, textBlock, auxTextBlock);
+		}
+
+		/**
+		 * Invoked when a button is pressed. If a list button is pressed, the subcallback is invoked by this method.
+		 */
+		@Override
+		public void onCallback(int selection) {
+			if(selection &gt;= 0) {
+				subCallback.onCallback(selection + pos * ListLayout.MAXLIST);
+			} else if(selection == Layout.LFTARROW) {
+				if(pos == 0) {
+					subCallback.onCallback(selection);
+				} else {
+					pos--;
+					String[] textBlock = new String[ListLayout.MAXLIST];
+					System.arraycopy(text, pos * ListLayout.MAXLIST, textBlock, 0, ListLayout.MAXLIST);
+					if(auxtext != null) {
+						String[] auxTextBlock = new String[ListLayout.MAXLIST];
+						System.arraycopy(auxtext, pos * ListLayout.MAXLIST, auxTextBlock, 0, ListLayout.MAXLIST);
+						drawList(this, Timepiece.SLIDERIGHT, Layout.Direction.BOTH, textBlock, auxTextBlock);
+					} else drawList(this, Timepiece.SLIDERIGHT, Layout.Direction.BOTH, textBlock);
+				}
+			} else if(selection == Layout.RGTARROW) {
+				pos++;
+				int len = ListLayout.MAXLIST;
+				if(pos == wid) len = text.length % ListLayout.MAXLIST;
+				String[] textBlock = new String[len];
+				System.arraycopy(text, pos * ListLayout.MAXLIST, textBlock, 0, len);
+				if(auxtext != null) {
+					String[] auxTextBlock = new String[len];
+					System.arraycopy(auxtext, pos * ListLayout.MAXLIST, auxTextBlock, 0, len);
+					drawList(this, Timepiece.SLIDELEFT, pos == wid ? Layout.Direction.LEFT : Layout.Direction.BOTH, textBlock, auxTextBlock);
+				} else drawList(this, Timepiece.SLIDELEFT, pos == wid ? Layout.Direction.LEFT : Layout.Direction.BOTH, textBlock);
+			}
+		}
+	}
+}</code>
 		<script src="code.js" type="text/javascript"></script>
-		<script src="gldecrypt.js" type="text/javascript"></script>
 	</body>
 </html>

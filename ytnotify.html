@@ -9,12 +9,1063 @@
 	<body>
 		<h1 class="center">YTNotify</h1>
 		<p>YTNotify is a YouTube channel update checker I made when a browser plugin I had been using for similar functionality stopped working. It works by periodically requesting special "channel uploads" playlists from YouTube's API and checking for any videos that are newer than what was previously recorded. It shows up as a tray icon and updates the user on new videos through the OS's notification system.</p>
-		<div class="code">
-			<code class="java"></code>
-			<img src="YTNotify.png" class="center" />
-		</div>
-		<canvas>This page needs WebGL to work!</canvas>
+		<code class="java">import java.awt.AWTException;
+import java.awt.Desktop;
+import java.awt.GridLayout;
+import java.awt.Image;
+import java.awt.Menu;
+import java.awt.MenuItem;
+import java.awt.PopupMenu;
+import java.awt.SystemTray;
+import java.awt.Toolkit;
+import java.awt.TrayIcon;
+import java.awt.TrayIcon.MessageType;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.ItemEvent;
+import java.awt.event.ItemListener;
+import java.awt.event.WindowEvent;
+import java.awt.event.WindowListener;
+import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.net.ConnectException;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.nio.charset.Charset;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Scanner;
+
+import javax.imageio.ImageIO;
+import javax.swing.border.EtchedBorder;
+import javax.swing.border.TitledBorder;
+import javax.swing.ImageIcon;
+import javax.swing.JButton;
+import javax.swing.JComboBox;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.ScrollPaneConstants;
+
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+
+public class YTNotify {
+
+	// "Constants", should not be modified during normal execution except by settings loader
+	int MAXMEM = 20;                  // Maximum amount of updates saved
+	String NOVIDS = "&lt;No new video&gt;"; // No videos in channel
+	String SAFESEARCH = "none";       // SafeSearch level
+	int RESULTS = 10;                 // Number of results in a "find by name" search
+	int SHORTDELAY = 10000;           // Delay between channel checks in milliseconds
+	int LONGDELAY = 3600000;          // Delay between update checks in milliseconds
+	int INFMULT = 12;                 // Delay multiplier for infrequent channels
+	int LISTRESULTS = 10;             // Playlist entries to get
+	boolean DEBUG = false;            // True to output raw JSON instead of processing
+	
+	// API request types
+	final int GETVID = 0;
+	final int FINDNAME = 1;
+	final int FINDID = 2;
+	final int SEARCH = 3;
+	
+	// The system tray, for adding/removing the tray icon
+	SystemTray tray;
+	
+	// The list of channels
+	ArrayList&lt;DataNode&gt; data;
+	
+	// The user's API key
+	String apikey;
+	
+	// Error log
+	String lasterror = "";
+	
+	// Update memory video name, video ID, and video channel name
+	String[] linkmem, memids, memnames;
+	// Update menu buttons
+	MenuItem[] linkbtns;
+	
+	// Channel settings window
+	SettingsBar sb;
+	
+	// Error debug info window
+	DebugBar db;
+	
+	// Update thread, for interrupting
+	Thread topthread;
+	
+	// Timeout retry counter
+	int stack;
+	
+	// False if the program should close
+	boolean running = true;
+	
+	// True if the program is currently between update checks
+	boolean paused = false;
+	
+	// True if an update was found during this round of checks
+	boolean update;
+
+	YTNotify() {
+		// Load data from files
+		// Load API key
+		try {
+			Scanner scn = new Scanner(new File("key.txt"));
+			apikey = scn.nextLine();
+			scn.close();
+		} catch(Exception e) {
+			System.err.println("Error reading API key!");
+			e.printStackTrace();
+			System.exit(1);
+		}
+		data = new ArrayList&lt;DataNode&gt;();
+		topthread = Thread.currentThread();
+		
+		// Read settings
+		try {
+			File setfile = new File("settings.txt");
+			if(!setfile.exists()) {
+				BufferedWriter writer = new BufferedWriter(new FileWriter(setfile));
+				writer.write(MAXMEM + " # Max amount of updates saved\n");
+				writer.write(NOVIDS + " # Placeholder string for empty playlist\n");
+				writer.write(SAFESEARCH + " # YouTube safesearch setting\n");
+				writer.write(RESULTS + " # Max number of results displayed per search\n");
+				writer.write(SHORTDELAY + " # Delay between each individual channel check, in milliseconds\n");
+				writer.write(LONGDELAY + " # Delay between checks of all channels, in milliseconds\n");
+				writer.write(INFMULT + " # Delay between checking infrequent channels, in multiples of above value\n");
+				writer.write(LISTRESULTS + " # Number of videos checked in playlist contents\n");
+				writer.write(DEBUG + " # True if debug mode is enabled\n");
+				writer.close();
+			} else {
+				Scanner file = new Scanner(new FileInputStream(setfile));
+				ArrayList&lt;String&gt; rawdata = new ArrayList&lt;String&gt;();
+				while(file.hasNext()) {
+					String line = file.nextLine().split("#")[0].trim();
+					if(!line.equals("")) rawdata.add(line);
+				}
+				file.close();
+
+				MAXMEM = Integer.parseInt(rawdata.get(0));
+				NOVIDS = rawdata.get(1);
+				SAFESEARCH = rawdata.get(2);
+				RESULTS = Integer.parseInt(rawdata.get(3));
+				SHORTDELAY = Integer.parseInt(rawdata.get(4));
+				LONGDELAY = Integer.parseInt(rawdata.get(5));
+				INFMULT = Integer.parseInt(rawdata.get(6));
+				LISTRESULTS = Integer.parseInt(rawdata.get(7));
+				DEBUG = Boolean.parseBoolean(rawdata.get(8));
+			}
+		} catch(Exception e) {
+			System.out.println("Error reading settings file!");
+			e.printStackTrace();
+			System.exit(1);
+		}
+		
+		// Load channels
+		try {
+			File df = new File("data.txt");
+			if(DEBUG) {
+				System.out.println("Data exists: " + df.exists());
+				System.out.println("Data size: " + df.length());
+			}
+			Scanner file = new Scanner(new FileInputStream(df));
+			ArrayList&lt;String&gt; rawdata = new ArrayList&lt;String&gt;();
+			
+			rawdata.add(file.nextLine());
+			
+			// Data entry length varies based on file version
+			int ver;
+			int wid = 5;
+			try {
+				ver = Integer.parseInt(rawdata.get(0));
+				if(ver &gt; 0) wid++;
+				if(ver &gt; 1) wid++;
+				rawdata.clear();
+			} catch(Exception e) {
+				ver = 0;
+			}
+			
+			// Read file into memory
+			while(file.hasNext())
+				rawdata.add(file.nextLine());
+			file.close();
+			if(DEBUG) System.out.println("Raw data size: " + rawdata.size());
+			
+			// Iterate through channel entries
+			for(int i = 0; i &lt; rawdata.size() / wid; i++) {
+				DataNode newdata = new DataNode();
+				newdata.name = rawdata.get(i * wid);
+				newdata.id = rawdata.get(i * wid + 1);
+				newdata.ulid = rawdata.get(i * wid + 2);
+				newdata.lastvid = rawdata.get(i * wid + 3);
+				newdata.inf = rawdata.get(i * wid + 4).equals("true");
+				if(ver &gt; 0) newdata.time = rawdata.get(i * wid + 5);
+				if(ver &gt; 1) newdata.disabled = rawdata.get(i * wid + 6).equals("true");
+				data.add(newdata);
+				
+				// If thumbnail doesn't exist, download it
+				if(!new File("db/" + newdata.id).exists() && !newdata.disabled) {
+					File dir = new File("db/" + newdata.id);
+					dir.mkdirs();
+					JSONObject channeldata = getYTJSON(newdata.id, FINDID);
+					JSONObject resone = (JSONObject)((JSONArray)channeldata.get("items")).get(0);
+					JSONObject snippet = (JSONObject)(resone.get("snippet"));
+					JSONObject thumbs = (JSONObject)(snippet.get("thumbnails"));
+					Image thumb = null;
+					try {
+						URL url = new URL((String)((JSONObject)thumbs.get("default")).get("url"));
+						thumb = ImageIO.read(url);
+					} catch(Exception e) {
+						e.printStackTrace();
+						System.exit(1);
+					}
+					ImageIO.write((BufferedImage)thumb, "png", new File(dir, "thumb.png"));
+				}
+			}
+		} catch(Exception e) {
+			// The data file hasn't been created yet. Just ignore.
+			// Or, some file system error happened, in which case there's not much the
+			// program can do, anyways.
+		}
+		if(DEBUG) System.out.println("Data size: " + data.size());
+		sb = new SettingsBar(this);
+		db = new DebugBar();
+
+		// Initialize update memory
+		linkmem = new String[MAXMEM];
+		memids = new String[MAXMEM];
+		memnames = new String[MAXMEM];
+		linkbtns = new MenuItem[MAXMEM];
+		
+		// Load update memory
+		try {
+			Scanner file = new Scanner(new FileInputStream(new File("memory.txt")));
+			ArrayList&lt;String&gt; rawdata = new ArrayList&lt;String&gt;();
+			while(file.hasNext())
+				rawdata.add(file.nextLine());
+			file.close();
+
+			for(int i = 0; i &lt; rawdata.size() / 3 && i &lt; MAXMEM; i++) {
+				linkmem[i] = rawdata.get(i * 3);
+				memids[i] = rawdata.get(i * 3 + 1);
+				memnames[i] = rawdata.get(i * 3 + 2);
+			}
+		} catch(Exception e) {}
+
+		// Initialize tray icon
+		tray = SystemTray.getSystemTray();
+		PopupMenu popup = new PopupMenu();
+		Image img = Toolkit.getDefaultToolkit().getImage("NotifyICO.png");
+		TrayIcon trayIcon = new TrayIcon(img, "YTNotify", popup);
+		trayIcon.setActionCommand("YTNotify");
+		trayIcon.setImageAutoSize(true);
+
+		// Initialize memory buttons
+		Menu memmenu = new Menu("Recent updates");
+		for(int i = 0; i &lt; MAXMEM; i++) {
+			if(linkmem[i] == null) {
+				linkbtns[i] = new MenuItem((i + 1) + ": None");
+			} else {
+				linkbtns[i] = new MenuItem((i + 1) + ": " + linkmem[i] + " - " + memnames[i]);
+			}
+			linkbtns[i].addActionListener(new ActionListener() {
+				int pos;
+
+				@Override
+				public void actionPerformed(ActionEvent e) {
+					// Memory button pressed, load video
+					if(linkmem[pos] == null) return;
+					try {
+						Desktop.getDesktop().browse(new URL("https://www.youtube.com/watch?v=" + memids[pos]).toURI());
+					} catch(Exception e1) {
+						e1.printStackTrace();
+					}
+				}
+
+				ActionListener init(int p) {
+					pos = p;
+					return this;
+				}
+			}.init(i));
+			memmenu.add(linkbtns[i]);
+		}
+
+		// Initialize other buttons
+		MenuItem itemChn = new MenuItem("View Channels");
+		itemChn.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				if(!sb.isVisible()) sb.changed = false;
+				sb.load(0);
+			}
+		});
+
+		MenuItem itemAdd = new MenuItem("Add by Name");
+		itemAdd.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				addChannel(false);
+			}
+		});
+		MenuItem itemAddID = new MenuItem("Add by ID");
+		itemAddID.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				addChannel(true);
+			}
+		});
+		MenuItem itemSearch = new MenuItem("Search for Name");
+		itemSearch.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				searchName();
+			}
+		});
+		MenuItem itemDebug = new MenuItem("View Debug Info");
+		itemDebug.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				db.showLog(lasterror);
+				lasterror = "";
+			}
+		});
+		MenuItem itemEnd = new MenuItem("End Program");
+		itemEnd.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				running = false;
+				if(paused) topthread.interrupt();
+			}
+		});
+
+		// Add everything to tray
+		popup.add(memmenu);
+		popup.add(itemChn);
+		popup.add(itemAdd);
+		popup.add(itemAddID);
+		popup.add(itemSearch);
+		popup.add(itemDebug);
+		popup.add(itemEnd);
+		trayIcon.setPopupMenu(popup);
+		try {
+			tray.add(trayIcon);
+		} catch(AWTException e) {
+			e.printStackTrace();
+			running = false;
+		}
+
+		int inf = 0;
+		boolean isinf;
+
+		// Main loop
+		whileloop: while(running) {
+			// Limit error log length
+			if(lasterror.length() &gt; 10000) {
+				lasterror = lasterror.substring(lasterror.length() - 10000, lasterror.length());
+			}
+			isinf = (inf == 0);
+			update = false;
+			
+			// Iterate through channels
+			forloop: for(int i = 0; i &lt; data.size(); i++) {
+				// Get updates JSON
+				DataNode pos = data.get(i);
+				if((pos.inf && !isinf) || pos.disabled) continue;
+				stack = 0;
+
+				// Check for updates
+				JSONObject json = getYTJSON(pos.ulid, GETVID);
+				if(json == null) {
+					trayIcon.displayMessage("Error!", "YouTube refused last request! Did you reach your quota?", MessageType.ERROR);
+					lasterror += "Failed at " + pos.name + "\n\n";
+					break forloop;
+				}
+				if(json.get("error") != null) {
+					trayIcon.displayMessage("Error!", "YouTube returned an error reaching " + pos.name + "! Did you reach your quota?", MessageType.ERROR);
+					break forloop;
+				}
+				
+				// Check for new videos
+				String title;
+				String vidid = null;
+				String tst = "";
+				Instant ti = Instant.EPOCH;
+				JSONArray items = (JSONArray)json.get("items");
+				if(items.size() == 0) {
+					title = NOVIDS;
+				} else {
+					Instant[] times = new Instant[items.size()];
+					String[] tstr = new String[items.size()];
+					for(int j = 0; j &lt; items.size(); j++) {
+						JSONObject vid = (JSONObject)items.get(j);
+						JSONObject snip = (JSONObject)vid.get("snippet");
+						tstr[j] = (String)snip.get("publishedAt");
+						times[j] = Instant.parse(tstr[j]);
+					}
+					int instpos = 0;
+					for(int j = 1; j &lt; items.size(); j++) {
+						if(times[instpos].isBefore(times[j])) instpos = j;
+					}
+
+					JSONObject vid = (JSONObject)items.get(instpos);
+					JSONObject snip = (JSONObject)vid.get("snippet");
+					JSONObject rid = (JSONObject)snip.get("resourceId");
+					vidid = (String)rid.get("videoId");
+					title = strProc((String)snip.get("title"));
+					ti = times[instpos];
+					tst = tstr[instpos];
+				}
+				Instant pt = Instant.EPOCH;
+				try {
+					pt = Instant.parse(pos.time);
+				} catch(Exception e) {}
+
+				if(!title.equals(pos.lastvid) && ti.isAfter(pt)) {
+					// Update found!
+					update = true;
+					trayIcon.displayMessage("New video from " + pos.name, title, MessageType.INFO);
+					pos.lastvid = title;
+					pos.time = tst;
+					for(int j = MAXMEM - 1; j &gt; 0; j--) {
+						linkmem[j] = linkmem[j - 1];
+						memids[j] = memids[j - 1];
+						memnames[j] = memnames[j - 1];
+						linkbtns[j].setLabel((j + 1) + ": " + linkmem[j] + " - " + memnames[j]);
+					}
+					linkmem[0] = title;
+					memids[0] = vidid;
+					memnames[0] = pos.name;
+					linkbtns[0].setLabel("1: " + linkmem[0] + " - " + memnames[0]);
+				}
+				
+				// Short delay between checks
+				if(!running) break whileloop;
+				try {
+					Thread.sleep(SHORTDELAY); // Spacer between each individual channel check
+				} catch(Exception e) {
+					e.printStackTrace();
+				}
+			}
+			
+			// Update infrequent counter
+			inf++;
+			if(inf == INFMULT) inf = 0;
+			if(DEBUG) System.exit(0);
+			
+			// Update found this round, write to memory file
+			if(update) {
+				saveData();
+				try {
+					BufferedWriter writer = new BufferedWriter(new FileWriter(new File("memory.txt")));
+					for(int j = 0; j &lt; MAXMEM; j++) {
+						if(linkmem[j] == null) break;
+						writer.write(linkmem[j] + "\n");
+						writer.write(memids[j] + "\n");
+						writer.write(memnames[j] + "\n");
+					}
+					writer.close();
+				} catch(IOException e) {
+					e.printStackTrace();
+				}
+			}
+			
+			// Wait between rounds
+			paused = true;
+			if(!running) break whileloop;
+			try {
+				Thread.sleep(LONGDELAY);
+			} catch(Exception e) {
+				e.printStackTrace();
+			}
+			if(!running) break whileloop;
+			paused = false;
+		}
+		tray.remove(trayIcon);
+		System.exit(0);
+	}
+
+	// Reads everything in a Reader to a single String.
+	private static String readAll(Reader read) throws IOException {
+		StringBuilder sb = new StringBuilder();
+		int in = read.read();
+		while(in != -1) {
+			sb.append((char)in);
+			in = read.read();
+		}
+		return sb.toString();
+	}
+
+	// Gets data from the API and converts it into a JSON object.
+	private JSONObject getYTJSON(String input, int type) {
+		JSONObject json = null;
+		InputStream is = null;
+		String page = "";
+		switch(type) {
+			case GETVID:
+				page = "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=" + input + "&maxResults=" + LISTRESULTS + "&key=" + apikey;
+				break;
+			case FINDNAME:
+				page = "https://www.googleapis.com/youtube/v3/channels?part=snippet%2CcontentDetails&forUsername=" + input + "&maxResults=1&key=" + apikey;
+				break;
+			case FINDID:
+				page = "https://www.googleapis.com/youtube/v3/channels?part=snippet%2CcontentDetails&id=" + input + "&maxResults=1&key=" + apikey;
+				break;
+			case SEARCH:
+				page = "https://www.googleapis.com/youtube/v3/search?part=snippet&q=" + input + "&maxResults=" + RESULTS + "&safeSearch=" + SAFESEARCH + "&type=channel&key=" + apikey;
+				break;
+		}
+		if(DEBUG) System.out.println(page);
+		try {
+			is = new URL(page).openStream();
+		} catch(ConnectException e) {
+			if(e.getMessage().indexOf("timed out") &gt; -1 && stack &lt; 5) {
+				stack++;
+				return getYTJSON(input, type);
+			}
+			System.out.println("HTTP Error! Malformed request? Quota reached?");
+			e.printStackTrace();
+			lasterror += "ConnectException thrown!\n";
+			lasterror += "Input: " + input + "\n";
+			lasterror += "Type:  " + type + "\n";
+			lasterror += e.getMessage() + "\n";
+			return null;
+		} catch(MalformedURLException e) {
+			System.out.println("HTTP Error! Malformed request? Quota reached?");
+			lasterror += "MalformedURLException thrown!\n";
+			lasterror += "Input: " + input + "\n";
+			lasterror += "Type:  " + type + "\n";
+			lasterror += e.getMessage() + "\n";
+			e.printStackTrace();
+			return null;
+		} catch(IOException e) {
+			lasterror += "IOException thrown!\n";
+			lasterror += "Input: " + input + "\n";
+			lasterror += "Type:  " + type + "\n";
+			lasterror += e.getMessage() + "\n";
+			System.out.println("HTTP Error! Malformed request? Quota reached?");
+			e.printStackTrace();
+			return null;
+		}
+		try {
+			BufferedReader rd = new BufferedReader(new InputStreamReader(is, Charset.forName("UTF-8")));
+			String jsonText = readAll(rd);
+			json = (JSONObject)new JSONParser().parse(jsonText);
+			// System.out.println(json.toString());
+		} catch(Exception e) {
+			e.printStackTrace();
+			lasterror += "Generic exception thrown!\n";
+			lasterror += "Input: " + input + "\n";
+			lasterror += "Type:  " + type + "\n";
+			lasterror += e.getMessage() + "\n";
+		} finally {
+			try {
+				is.close();
+			} catch(Exception e) {
+				lasterror += "Generic finally exception thrown!\n";
+				lasterror += "Input: " + input + "\n";
+				lasterror += "Type:  " + type + "\n";
+				lasterror += e.getMessage() + "\n";
+				e.printStackTrace();
+			}
+		}
+		return json;
+	}
+
+	// Writes the internal array of data to a file
+	void saveData() {
+		try {
+			BufferedWriter writer = new BufferedWriter(new FileWriter(new File("data.txt")));
+			writer.write("2\n");
+			for(int i = 0; i &lt; data.size(); i++) {
+				writer.write(data.get(i).name + "\n");
+				writer.write(data.get(i).id + "\n");
+				writer.write(data.get(i).ulid + "\n");
+				writer.write(data.get(i).lastvid + "\n");
+				if(data.get(i).inf) {
+					writer.write("true\n");
+				} else writer.write("false\n");
+				writer.write(data.get(i).time + "\n");
+				if(data.get(i).disabled) {
+					writer.write("true\n");
+				} else writer.write("false\n");
+			}
+			writer.close();
+		} catch(IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	// Adds a new channel
+	void addChannel(boolean byID) {
+		// Get channel-identifying information
+		JSONObject channeldata = null;
+		if(byID) {
+			String searchid = JOptionPane.showInputDialog("Channel ID?");
+			if(searchid == null || searchid.trim().equals("")) {
+				JOptionPane.showMessageDialog(null, "No ID entered!", "Error!", JOptionPane.ERROR_MESSAGE);
+				return;
+			}
+			channeldata = getYTJSON(searchid, FINDID);
+		} else {
+			String searchname = JOptionPane.showInputDialog("Channel name?");
+			if(searchname == null || searchname.trim().equals("")) {
+				JOptionPane.showMessageDialog(null, "No name entered!", "Error!", JOptionPane.ERROR_MESSAGE);
+				return;
+			}
+			channeldata = getYTJSON(searchname, FINDNAME);
+		}
+		if(channeldata == null) {
+			JOptionPane.showMessageDialog(null, "YouTube refused request! Did you type something wrong?", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		if(channeldata.get("error") != null) {
+			JOptionPane.showMessageDialog(null, "YouTube returned an error! Did you type something wrong?", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+
+		// Get and process information from the API
+		JSONObject res = (JSONObject)channeldata.get("pageInfo");
+		long results;
+		try {
+			results = (long)res.get("totalResults");
+		} catch(NullPointerException e) {
+			JSONArray itms = (JSONArray)channeldata.get("items");
+			results = itms.size();
+		}
+		if(results == 0) {
+			JOptionPane.showMessageDialog(null, "No results found!", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		JSONObject resone = (JSONObject)((JSONArray)channeldata.get("items")).get(0);
+		JSONObject snippet = (JSONObject)(resone.get("snippet"));
+		JSONObject thumbs = (JSONObject)(snippet.get("thumbnails"));
+		Image thumb = null;
+		try {
+			URL url = new URL((String)((JSONObject)thumbs.get("default")).get("url"));
+			thumb = ImageIO.read(url);
+		} catch(Exception e1) {
+			e1.printStackTrace();
+			return;
+		}
+		String chname = (String)snippet.get("title");
+		int ans = JOptionPane.showConfirmDialog(null, "Is it " + chname + "?", "Confirm", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE, new ImageIcon(thumb));
+		if(ans != JOptionPane.YES_OPTION) return;
+		DataNode newdata = new DataNode();
+		newdata.name = chname;
+		newdata.id = (String)resone.get("id");
+		for(int i = 0; i &lt; data.size(); i++) {
+			if(data.get(i).id.equals(newdata.id)) {
+				JOptionPane.showMessageDialog(null, "That channel is already being watched!", "Error!", JOptionPane.ERROR_MESSAGE);
+			}
+		}
+		JSONObject cd = (JSONObject)resone.get("contentDetails");
+		JSONObject rp = (JSONObject)cd.get("relatedPlaylists");
+		newdata.ulid = (String)rp.get("uploads");
+		JSONObject json = getYTJSON(newdata.ulid, GETVID);
+		if(json == null) {
+			JOptionPane.showMessageDialog(null, "YouTube returned an error! Did you type something wrong?", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		if(((JSONArray)json.get("items")).size() == 0) {
+			newdata.lastvid = NOVIDS;
+		} else {
+			JSONObject vid = (JSONObject)((JSONArray)json.get("items")).get(0);
+			JSONObject snip = (JSONObject)vid.get("snippet");
+			newdata.lastvid = (String)snip.get("title");
+		}
+		
+		// Write channel thumbnail
+		File dir = new File("db/" + newdata.id);
+		dir.mkdirs();
+		try {
+			ImageIO.write((BufferedImage)thumb, "png", new File(dir, "thumb.png"));
+		} catch(IOException e) {
+			e.printStackTrace();
+		}
+		data.add(newdata);
+		saveData();
+	}
+
+	// Search for a channel
+	void searchName() {
+		// Get search terms
+		String searchid = JOptionPane.showInputDialog("Search terms?");
+		if(searchid == null || searchid.trim().equals("")) {
+			JOptionPane.showMessageDialog(null, "No terms entered!", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		JSONObject channeldata = getYTJSON(searchid.replace(" ", "%7C"), SEARCH);
+		if(channeldata == null) {
+			JOptionPane.showMessageDialog(null, "YouTube refused request! Did you type something wrong?", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		if(channeldata.get("error") != null) {
+			JOptionPane.showMessageDialog(null, "YouTube returned an error! Did you type something wrong?", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		JSONArray results = (JSONArray)channeldata.get("items");
+		int numresults = results.size();
+		boolean done = false;
+		JSONObject snippet = null;
+		String chname = "";
+		Image thumb = null;
+
+		// Flip through list of results
+		for(int i = 0; i &lt; numresults; i++) {
+			snippet = (JSONObject)(((JSONObject)results.get(i)).get("snippet"));
+			JSONObject thumbs = (JSONObject)(snippet.get("thumbnails"));
+			try {
+				URL url = new URL((String)((JSONObject)thumbs.get("default")).get("url"));
+				thumb = ImageIO.read(url);
+			} catch(Exception e1) {
+				e1.printStackTrace();
+				return;
+			}
+			chname = (String)snippet.get("title");
+			int ans = JOptionPane.showConfirmDialog(null, "Is it " + chname + "?", "Confirm", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE, new ImageIcon(thumb));
+			if(ans == JOptionPane.NO_OPTION) continue;
+			if(ans == JOptionPane.YES_OPTION) {
+				done = true;
+				break;
+			}
+			return;
+		}
+		if(!done) return;
+
+		// Get the rest of the data needed
+		String chid = (String)snippet.get("channelId");
+		channeldata = getYTJSON(chid, FINDID);
+		if(channeldata == null) {
+			JOptionPane.showMessageDialog(null, "YouTube refused request!", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		if(channeldata.get("error") != null) {
+			JOptionPane.showMessageDialog(null, "YouTube returned an error!", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		JSONObject res = (JSONObject)channeldata.get("pageInfo");
+		long numres;
+		try {
+			numres = (long)res.get("totalResults");
+		} catch(NullPointerException e) {
+			JSONArray itms = (JSONArray)channeldata.get("items");
+			numres = itms.size();
+		}
+		if(numres == 0) {
+			JOptionPane.showMessageDialog(null, "No results found for ID...?", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		JSONObject resone = (JSONObject)((JSONArray)channeldata.get("items")).get(0);
+		snippet = (JSONObject)(resone.get("snippet"));
+		DataNode newdata = new DataNode();
+		newdata.name = chname;
+		newdata.id = chid;
+		for(int i = 0; i &lt; data.size(); i++) {
+			if(data.get(i).id.equals(chid)) {
+				JOptionPane.showMessageDialog(null, "That channel is already being watched!", "Error!", JOptionPane.ERROR_MESSAGE);
+			}
+		}
+		JSONObject cd = (JSONObject)resone.get("contentDetails");
+		JSONObject rp = (JSONObject)cd.get("relatedPlaylists");
+		newdata.ulid = (String)rp.get("uploads");
+		JSONObject json = getYTJSON(newdata.ulid, GETVID);
+		if(json == null) {
+			JOptionPane.showMessageDialog(null, "YouTube returned an error!", "Error!", JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		if(((JSONArray)json.get("items")).size() == 0) {
+			newdata.lastvid = NOVIDS;
+		} else {
+			JSONObject vid = (JSONObject)((JSONArray)json.get("items")).get(0);
+			JSONObject snip = (JSONObject)vid.get("snippet");
+			newdata.lastvid = (String)snip.get("title");
+		}
+		
+		// Write channel thumbnail
+		File dir = new File("db/" + newdata.id);
+		dir.mkdirs();
+		try {
+			ImageIO.write((BufferedImage)thumb, "png", new File(dir, "thumb.png"));
+		} catch(IOException e) {
+			e.printStackTrace();
+		}
+		data.add(newdata);
+		saveData();
+	}
+	
+	String strProc(String in) {
+		byte[] chrs = new byte[in.length()];
+		for(int i = 0; i &lt; in.length(); i++) {
+			if((in.charAt(i) & 0xFFFFFF00) &gt; 0) {
+				chrs[i] = '?';
+			} else chrs[i] = (byte)in.charAt(i);
+		}
+		return new String(chrs);
+	}
+
+	public static void main(String[] args) {
+		new YTNotify();
+	}
+}
+
+// Channel info entry
+class DataNode {
+	// Channel name, ID, update playlist ID, and title and time of the latest video
+	String name, id, ulid, lastvid, time;
+	
+	// True if the channel should be checked infrequently
+	boolean inf;
+	
+	// True if the channel is disabled
+	boolean disabled;
+}
+
+// Settings window
+class SettingsBar extends JFrame {
+	// Essential to window functionality
+	private static final long serialVersionUID = 1L;
+	
+	// Current position in the channel list
+	int pos;
+	
+	// True if channel settings were changed
+	boolean changed;
+	
+	// The "parent" update class
+	YTNotify here;
+	
+	// Window text
+	JLabel titleDT, titleDT2, titleFC;
+	
+	// Window buttons: View channel, delete, previous channel, next channel
+	JButton boxOP, boxDL, boxPR, boxNX;
+	
+	// The currently displayed channel
+	DataNode data;
+	
+	// Regular/infrequent/disabled check frequency combo box
+	JComboBox&lt;String&gt; boxLS;
+
+
+	SettingsBar(YTNotify h) {
+		here = h;
+		setLayout(new GridLayout(0, 2, 2, 2));
+		titleDT = new JLabel();
+		titleDT2 = new JLabel();
+		titleFC = new JLabel("Check");
+		
+		String[] opts = {"Regular", "Infrequently", "Disabled"};
+		boxLS = new JComboBox&lt;String&gt;(opts);
+		boxLS.addItemListener(new ItemListener() {
+			@Override
+			public void itemStateChanged(ItemEvent e) {
+				// Frequency combo box changed
+				int index = boxLS.getSelectedIndex();
+				data.inf = (index == 1);
+				data.disabled = (index == 2);
+			}
+		});
+		boxOP = new JButton("View Channel");
+		boxOP.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				// Load channel's page
+				try {
+					Desktop.getDesktop().browse(new URL("https://www.youtube.com/channel/" + data.id + "/featured").toURI());
+				} catch(Exception e1) {
+					e1.printStackTrace();
+				}
+			}
+		});
+		boxDL = new JButton("Delete");
+		boxDL.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				Image thumb = null;
+				try {
+					thumb = ImageIO.read(new File("db/" + data.id + "/thumb.png"));
+				} catch(Exception e1) {
+					e1.printStackTrace();
+					return;
+				}
+				int ans = JOptionPane.showConfirmDialog(null, "Really delete " + data.name + "?", "Confirm", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE, new ImageIcon(thumb));
+				if(ans != JOptionPane.YES_OPTION) return;
+				
+				// Remove channel from list
+				here.data.remove(pos);
+				here.saveData();
+				new File("db/" + data.id).delete();
+				if(here.data.size() == 0) {
+					setVisible(false);
+					return;
+				}
+				load(Math.max(pos - 1, 0));
+			}
+		});
+		boxPR = new JButton("&lt;-");
+		boxPR.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				load(pos - 1);
+			}
+		});
+		boxNX = new JButton("-&gt;");
+		boxNX.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				load(pos + 1);
+			}
+		});
+		
+		// Put window together
+		add(titleDT);
+		add(titleDT2);
+		add(titleFC);
+		add(boxLS);
+		add(boxOP);
+		add(boxDL);
+		add(boxPR);
+		add(boxNX);
+		this.addWindowListener(new WindowListener() {
+
+			@Override
+			public void windowOpened(WindowEvent e) {}
+
+			@Override
+			public void windowClosing(WindowEvent e) {
+				// Save data and hide window
+				if(changed) here.saveData();
+				setVisible(false);
+			}
+
+			@Override
+			public void windowClosed(WindowEvent e) {
+				// Window doesn't close, it gets hidden
+				System.err.println("Settings window closed!");
+			}
+
+			@Override
+			public void windowIconified(WindowEvent e) {}
+
+			@Override
+			public void windowDeiconified(WindowEvent e) {}
+
+			@Override
+			public void windowActivated(WindowEvent e) {}
+
+			@Override
+			public void windowDeactivated(WindowEvent e) {}
+			
+		});
+		pack();
+		setLocation(800, 450);
+	}
+	
+	// Load a channel's settings
+	void load(int npos) {
+		pos = npos;
+		int size = here.data.size();
+		if(size == 0) return;
+		if(pos == -1) pos = size - 1;
+		if(pos == size) pos = 0;
+		data = here.data.get(pos);
+		setTitle((pos + 1) + " of " + size);
+		titleDT.setText(data.name);
+		Image thumb = null;
+		try {
+			thumb = ImageIO.read(new File("db/" + data.id + "/thumb.png"));
+		} catch(Exception e1) {
+			e1.printStackTrace();
+			System.exit(1);
+		}
+		titleDT2.setIcon(new ImageIcon(thumb));
+		if(data.inf) {
+			boxLS.setSelectedIndex(1);
+		} else if(data.disabled) {
+			boxLS.setSelectedIndex(2);
+		} else boxLS.setSelectedIndex(0);
+		pack();
+		setVisible(true);
+	}
+}
+
+// Transmission error info window
+// Essentially just a textbox
+class DebugBar extends JFrame {
+	// Essential to window functionality
+	private static final long serialVersionUID = 1L;
+	
+	JTextArea display;
+	
+	DebugBar() {
+		JPanel middlePanel = new JPanel();
+		middlePanel.setBorder(new TitledBorder(new EtchedBorder(), "Debug Info"));
+		
+		// Set up text box
+		display = new JTextArea(16, 58);
+		display.setEditable(false);
+		JScrollPane scroll = new JScrollPane(display);
+		scroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+		middlePanel.add(scroll);
+		
+		this.addWindowListener(new WindowListener() {
+
+			@Override
+			public void windowOpened(WindowEvent e) {}
+
+			@Override
+			public void windowClosing(WindowEvent e) {
+				// Just hide the window
+				setVisible(false);
+			}
+
+			@Override
+			public void windowClosed(WindowEvent e) {
+				// Window doesn't close, it gets hidden
+				System.err.println("Debug window closed!");
+			}
+
+			@Override
+			public void windowIconified(WindowEvent e) {}
+
+			@Override
+			public void windowDeiconified(WindowEvent e) {}
+
+			@Override
+			public void windowActivated(WindowEvent e) {}
+
+			@Override
+			public void windowDeactivated(WindowEvent e) {}
+			
+		});
+		
+		// Put window together
+		add(middlePanel);
+		pack();
+		setLocationRelativeTo(null);
+		setVisible(false);
+	}
+	
+	// Display the current debug log
+	void showLog(String log) {
+		display.setText(log);
+		setVisible(true);
+	}
+}
+</code>
 		<script src="code.js" type="text/javascript"></script>
-		<script src="gldecrypt.js" type="text/javascript"></script>
 	</body>
 </html>

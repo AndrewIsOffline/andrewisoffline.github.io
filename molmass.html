@@ -1,21 +1,774 @@
 <!doctype html>
 <html>
-<head>
-	<title>MolMass - Portfolio</title>
-	<meta charset="utf-8"/>
-	<meta name="viewport" content="width=device-width, initial-scale=1"/>
-	<link href="portfolio.css" rel="stylesheet" type="text/css"/>
-</head>
-<body>
-	<h1 class="center">MolMass</h1>
-	<p>MolMass was my first real assembly program, written in Z80 assembly for the TI84 calculator. This takes an entered chemical formula and calculates its molar mass.</p>
-	<p>I wrote this before I knew proper calling conventions, so the way that arguments are sent is a bit nonstandard.</p>
-	<div class="code">
-		<code class="asm"></code>
-		<img src="MOLMASS.png" class="center" />
-	</div>
-	<canvas>This page needs WebGL to work!</canvas>
-	<script src="code.js" type="text/javascript"></script>
-	<script src="gldecrypt.js" type="text/javascript"></script>
-</body>
+	<head>
+		<title>MolMass - Portfolio</title>
+		<meta charset="utf-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1"/>
+		<link href="portfolio.css" rel="stylesheet" type="text/css"/>
+	</head>
+	<body>
+		<h1 class="center">MolMass</h1>
+		<p>MolMass was my first real assembly program, written in Z80 assembly for the TI84 calculator. This takes an entered chemical formula and calculates its molar mass.</p>
+		<p>I wrote this before I knew proper calling conventions, so the way that arguments are sent is a bit nonstandard.</p>
+		<code class="asm">.NOLIST
+#define   EQU   .equ
+#define   equ   .equ
+#define   END   .end
+#define   end   .end
+
+; Globals
+#define sphead1 98B0h
+#define sphead2 98B1h
+#define flagbit 98B2h   ; null, null, null, null, null, null, alpha, number
+#define addbyte1 98B3h
+#define addbyte2 98B4h
+#define addbyte3 98B5h ; LSB
+#define cache 98B9h
+#define mulbyte1 98BAh
+#define mulbyte2 98BBh
+#define mulbyte3 98BCh ; LSB
+#define hlbyte1 98BDh
+#define hlbyte2 98BEh
+#define cachex 98B7h
+#define cachey 98B8h
+#define cachez 98BFh
+#define cachepos1 98C0h
+#define cachepos2 98C1h
+#define export 98C2h
+
+#include "ti83plus.inc"
+.LIST
+
+	; Header stuff to make this a real app
+	.org 4000h
+	; Header stuff goes here. The app name should be "MolMass"
+	
+; Initialize state
+	bcall(_ClrLCDFull)
+	xor a
+	ld (sphead1), sp
+	ld hl, (sphead1)
+	ld (flagbit), a
+	ld (curRow), a
+	ld (curCol), a
+	ld (addbyte1), a
+	ld (addbyte2), a
+	ld (addbyte3), a
+	;ld (state), a
+	ld (cache), a
+	call typemode
+	
+; Get input
+input:
+	ei
+	ld a, (kbdScanCode)
+	cp 0
+	jp z, input
+	ld c, a
+	
+; Wait for input to clear
+off:
+	ei
+	ld a, (kbdScanCode)
+	cp 0
+	jp nz, off
+	ld a, c
+	
+; Handle special characters
+	cp skEnter
+	jp z, calc
+	cp skLeft
+	jp z, addLeft
+	cp skRight
+	jp z, addRight
+	cp skDel
+	jp z, del
+	cp skAlpha
+	jp z, alphafl
+	cp sk2nd
+	jp z, numfl
+	
+; Get the current key map
+	ex de, hl
+	ld hl, flagbit
+	ld l, (hl)
+	bit 7, l
+	jp nz, shiftNum
+	bit 6, l
+	jp nz, shiftLwr
+	ld hl, regDB
+	jp shiftAll
+
+shiftNum:
+	ld hl, numDB
+	jp shiftAll
+	
+shiftLwr:
+	ld hl, lwrDB
+	
+; Jump to the character in the current key map and load it
+shiftAll:
+	add a, l
+	jp nc, nosub1
+	inc h
+nosub1:
+	ld l, a
+	ld a, (hl)
+	ex de, hl
+	jp addChar
+	
+; Add parenthesis
+addLeft:
+	ld a, '('
+	jp addChar
+
+addRight:
+	ld a, ')'
+
+; If "a" is a character, append and display it
+addChar:
+	and a
+	jp z, input
+	dec sp
+	dec hl
+	ld (hl), a
+	bcall(_PutC)
+	jp input
+
+; Backspace a character
+del:
+	ld a, (curCol)
+	sub a, 1
+	jp nc, nosub2
+	ld a, (curRow)
+	sub a, 1
+	jp c, input
+	ld (curRow), a
+	ld a, 0Fh
+nosub2:
+	ld (curCol), a
+	ld a, ' '
+	bcall(_PutMap)
+	inc hl
+	inc sp
+	jp input
+
+; Change to/from the lowercase key map
+alphafl:
+	ex de, hl
+	ld hl, flagbit
+	ld a, (hl)
+	bit 6, a
+	jp nz, rstAlpha
+	set 6, a
+	res 7, a
+	ld (hl), a
+	ex de, hl
+	call typemode
+	jp input
+rstAlpha:
+	res 6, a
+	ld (hl), a
+	ex de, hl
+	call typemode
+	jp input
+
+; Change to/from the number key map
+numfl:
+	ex de, hl
+	ld hl, flagbit
+	ld a, (hl)
+	bit 7, a
+	jp nz, rstNum
+	res 6, a
+	set 7, a
+	ld (hl), a
+	ex de, hl
+	call typemode
+	jp input
+rstNum:
+	res 7, a
+	ld (hl), a
+	ex de, hl
+	call typemode
+	jp input
+	
+; ROUTINE: Displays the current typing mode
+; a, b, c, d, e, (cachepos) are modified
+typemode:
+	ld b, h
+	ld c, l
+	ld hl, (curRow)
+	ld (cachepos1), hl
+	ld hl, flagbit
+	ld l, (hl)
+	bit 7, l
+	jp nz, ldnum
+	bit 6, l
+	jp nz, ldlwr
+	ld hl, upc
+	jp drawchar
+ldnum:
+	ld hl, num
+	jp drawchar
+ldlwr:
+	ld hl, lwr
+drawchar:
+	ld de, export
+	bcall(_StrCopy)
+	ld hl, 007h
+	ld (curRow), hl
+	ld hl, export
+	bcall(_PutS)
+	ld hl, (cachepos1)
+	ld (curRow), hl
+	ld h, b
+	ld l, c
+	ret
+	
+;   -----   START OF CALCULATING CODE   -----
+
+; Initialize state
+calc:
+	dec hl
+	ld (hl), 0
+	ld sp, hl
+	ld hl, (sphead1)
+	dec hl
+	xor a
+	ld b, a
+	ld c, a
+; Start of processing loop, branch to subroutines
+calcloop:
+	ld a, (hl)
+	and a
+	jp z, done
+	cp '('
+	jp z, openbr
+	cp ')'
+	jp z, closebr
+	cp 5Bh
+	jp nc, crash1
+	cp 41h
+	jp c, crash2
+	
+; Current character is uppercase, loads the matching sublist
+; Positions ix in master list, de loads the head of sublist
+	sub 'A'
+	add a, a
+	ld ix, masterkey
+	ld d, 0
+	ld e, a
+	add ix, de
+	ld d, (ix+1)
+	ld e, (ix+0)
+	xor a
+	cp d
+	jp nz, checked1
+	cp e
+	jp z, crash4
+	
+; Check for lowercase letter
+checked1:
+	dec hl
+	ld a, (hl)
+	cp 60h
+	jp c, onech
+	dec de
+	
+; Scan for lowercase character in sublist
+lwrloop:
+	inc de
+	inc de
+	inc de
+	ld a, (de)
+	and a
+	jp z, crash6
+	cp (hl)
+	jp nz, lwrloop
+	inc de
+	dec hl
+	
+; Only one character, check head of sublist
+onech:
+	ld a, (de)
+	inc de
+	and a
+	jp nz, checked2
+	ld a, (de)
+	and a
+	jp z, crash3
+	
+; Check for number
+checked2:
+	ld a, (hl)
+	cp 30h
+	jp c, nonum
+	cp 3Ah
+	jp nc, nonum
+; Move new value into add bytes for multiplication
+	ld a, c
+	ld (cachex), a
+	xor a
+	ld (addbyte1), a
+	ld a, (de)
+	ld (addbyte3), a
+	dec de
+	ld a, (de)
+	ld (addbyte2), a
+	call parse
+	ld (hlbyte1), hl
+	call mulval
+	ld hl, (hlbyte1)
+	ld a, (cachex)
+	ld c, a
+	call addvalmem
+	jp calcloop
+	
+; No number after element, add it as-is
+nonum:
+	call addval
+	jp calcloop
+	
+	
+; ROUTINE: ((de-1), (de)) is added to ((cache), b, c)
+; a, de are modified
+addval:
+	ld a, (de)
+	add a, c
+	ld c, a
+	dec de
+	ld a, (de)
+	adc a, b
+	ld b, a
+	ret nc
+	ld a, (cache)
+	inc a
+	jp pe, crash5
+	ld (cache), a
+	ret
+	
+; ROUTINE: ((addbyte1), (addbyte2), (addbyte3)) is added to ((cache), b, c)
+; a, (addbyte2) are modified
+addvalmem:
+	ld a, (addbyte3)
+	add a, c
+	ld c, a
+	ld a, (addbyte2)
+	adc a, b
+	ld (addbyte2), a
+	ld a, (cache)
+	ld b, a
+	ld a, (addbyte1)
+	adc a, b
+	jp c, crash5
+	ld (cache), a
+	ld a, (addbyte2)
+	ld b, a
+	ret
+	
+; ROUTINE: ((addbyte1), (addbyte2), (addbyte3)) is multiplied by (c)
+; a, c, (mulbytes), hl are modified
+mulval:
+	ld a, (addbyte1)
+	ld (mulbyte1), a
+	ld a, (addbyte2)
+	ld (mulbyte2), a
+	ld a, (addbyte3)
+	ld (mulbyte3), a
+	bit 0, c
+	jp nz, dobit
+	xor a
+	ld (addbyte1), a
+	ld (addbyte2), a
+	ld (addbyte3), a
+	jp loop1
+dobit:
+	res 0, c
+loop1:
+	bit 0, c
+	jp z, shift
+	ld a, (addbyte3)
+	ld hl, mulbyte3
+	add a, (hl)
+	ld (addbyte3), a
+	ld a, (addbyte2)
+	dec hl
+	adc a, (hl)
+	ld (addbyte2), a
+	ld a, (addbyte1)
+	dec hl
+	adc a, (hl)
+	ld (addbyte1), a
+	res 0, c
+shift:
+	xor a
+	rrc c
+	res 7, c
+	cp c
+	ret z
+	ld a, (mulbyte3)
+	sla a
+	ld (mulbyte3), a
+	ld a, (mulbyte2)
+	rl a
+	ld (mulbyte2), a
+	ld a, (mulbyte1)
+	rl a
+	ld (mulbyte1), a
+	jp c, crash5
+	jp loop1
+	
+; ROUTINE: Parses the number characters at ((hl)) to (c)
+; hl, a are modified
+; FIRST CHARACTER MUST BE A NUMBER
+parse:
+	ld a, (hl)
+	sub 30h
+	ld c, a
+	dec hl
+parseloop:
+	ld a, (hl)
+	cp 30h
+	ret c
+	cp 3Ah
+	ret nc
+	ld a, c
+	sla a
+	jp c, crash5
+	sla a
+	jp c, crash5
+	sla a
+	jp c, crash5
+	add a, c
+	jp c, crash5
+	add a, c
+	jp c, crash5
+	ld c, a
+	ld a, (hl)
+	dec hl
+	sub 30h
+	add a, c
+	jp c, crash5
+	ld c, a
+	jp parseloop
+	
+; ROUTINE: Adds the value at ((ix), (ix+1), (ix+2)) to ((cache), b, c) until there is no carry, then reverses the last addition.
+; The number of additions is added to d.
+; a is modified
+digitloop:
+	ld (cache), a
+digit:
+	inc d
+	ld a, c
+	add a, (ix+2)
+	ld c, a
+	ld a, b
+	adc a, (ix+1)
+	ld b, a
+	ld a, (cache)
+	adc a, (ix)
+	jp c, digitloop
+	dec d
+	ld a, c
+	sub a, (ix+2)
+	ld c, a
+	ld a, b
+	sbc a, (ix+1)
+	ld b, a
+	ret
+	
+; Open bracket, store current value and clear
+openbr:
+	push bc
+	ld a, (cache)
+	push af
+	xor a
+	ld b, a
+	ld c, a
+	ld (cache), a
+	dec hl
+	jp calcloop
+
+; Close bracket, look for number
+closebr:
+	ld a, c
+	ld (addbyte3), a
+	ld a, b
+	ld (addbyte2), a
+	ld a, (cache)
+	ld (addbyte1), a
+	dec hl
+	ld a, (hl)
+	cp 30h
+	jp c, nonum2
+	cp 3Ah
+	jp nc, nonum2
+	call parse
+	ld (hlbyte1), hl
+	call mulval
+	ld hl, (hlbyte1)
+
+; Recall stored number and add
+nonum2:
+	pop af
+	ld (cache), a
+	pop bc
+	call addvalmem
+	jp calcloop
+
+; Done calculating, store to "Ans"
+done:
+	xor a
+	cp b
+	jp nz, good1
+	cp c
+	jp nz, good1
+	ld a, (cache)
+	and a
+	jp z, quit
+good1:
+	ld de, 0
+	ld ix, tenmil
+	call digit
+	sla d
+	sla d
+	sla d
+	sla d
+	ld ix, onemil
+	call digit
+	ld a, d
+	ld (export+2), a
+	ld d, 0
+	ld ix, hunklo
+	call digit
+	sla d
+	sla d
+	sla d
+	sla d
+	ld ix, tenklo
+	call digit
+	ld a, d
+	ld (export+3), a
+	ld d, 0
+	ld ix, oneklo
+	call digit
+	sla d
+	sla d
+	sla d
+	sla d
+	ld ix, hunval
+	call digit
+	ld a, d
+	ld (export+4), a
+	ld d, 0
+	ld ix, tenval
+	call digit
+	sla d
+	sla d
+	sla d
+	sla d
+	ld ix, oneval
+	call digit
+	ld a, d
+	ld (export+5), a
+	ld ix, export
+shift2:
+	ld a, (export+2)
+	and 0F0h
+	jp nz, done2
+	ld b, 4
+shiftloop:
+	sla (ix+5)
+	rl (ix+4)
+	rl (ix+3)
+	rl (ix+2)
+	djnz shiftloop
+	dec e
+	jp shift2
+	
+done2:
+	xor a
+	ld (export), a
+	ld (export+6), a
+	ld (export+7), a
+	ld (export+8), a
+	ld a, 85h
+	add a, e
+	ld (export+1), a
+	ld hl, export
+	rst 20h
+	bcall(_PushRealO1)
+	bcall(_StoAns)
+	jp quit
+
+; Misplaced lowercase character
+crash1:
+	ld hl, errmsg1
+	jp crashdisp
+
+; Misplaced number
+crash2:
+	ld hl, errmsg2
+	jp crashdisp
+
+; Single character element that doesn't exist
+crash3:
+	ld hl, errmsg3
+	jp crashdisp
+
+; Uppercase character that isn't used
+crash4:
+	ld hl, errmsg3
+	jp crashdisp
+
+; Value overflow
+crash5:
+	ld hl, errmsg4
+	jp crashdisp
+
+; Two letter element that doesn't exist
+crash6:
+	ld hl, errmsg3
+	
+crashdisp:
+	xor a
+	ld (curCol), a
+	add a, 6
+	ld (curRow), a
+	ld de, export
+	bcall(_StrCopy)
+	ld hl, export
+	bcall(_PutS)
+	bcall(_GetKey)
+	
+; Restore state and exit
+quit:
+	ld sp, (sphead1)
+	ld IY, flags
+	bcall(_ClrLCDFull)
+	bcall(_JForceCmdNoChar)
+	
+; Uppercase character map
+regDB:
+	.db 0, 0, 0, 0, 0, 0, 0, 0, 0
+	.db 0, 0, "WRMH", 0
+	.db 0, 0, 0, "VQLG", 0
+	.db 0, 0, "ZUPKFC", 0
+	.db 0, "YTOJEB", 0
+	.db 0, "XSNIDA", 0, 0
+	.db 0, 0, 0, 0, 0, 0, 0
+; Lowercase character map
+lwrDB:
+	.db 0, 0, 0, 0, 0, 0, 0, 0, 0
+	.db 0, 0, "wrmh", 0
+	.db 0, 0, 0, "vqlg", 0
+	.db 0, 0, "zupkfc", 0
+	.db 0, "ytojeb", 0
+	.db 0, "xsnida", 0, 0
+	.db 0, 0, 0, 0, 0, 0, 0
+; Number character map
+numDB:
+	.db 0, 0, 0, 0, 0, 0, 0, 0, 0
+	.db 0, 0, 0, 0, 0, 0, 0
+	.db 0, 0, "369)", 0, 0
+	.db 0, 0, "258(", 0, 0, 0
+	.db "0147", 0, 0, 0, 0
+	.db 0, 0, 0, 0, 0, 0, 0, 0, 0
+	.db 0, 0, 0, 0, 0, 0, 0
+
+; Master uppercase character list: Contains addresses of sublists, indexed by shifted ASCII value
+masterkey:
+	.dw Akey, Bkey, Ckey, Dkey, Ekey, Fkey, Gkey, Hkey, Ikey, 0, Kkey, Lkey, Mkey, Nkey, Okey, Pkey, 0, Rkey, Skey, Tkey, Ukey, Vkey, Wkey, Xkey, Ykey, Zkey
+	
+; Character sublists
+; First entry is for just uppercase character ("B")
+; Following entries are for additional lowercase character ("Ag")
+Akey:
+	.db 000h, 000h, 'g', 02Ah, 023h, 'l', 00Ah, 08Ah, 'r', 00Fh, 098h, 's', 01Dh, 044h, 'u', 04Ch, 0F1h, 0
+Bkey:
+	.db 004h, 039h, 'a', 035h, 0A5h, 'e', 003h, 085h, 'i', 051h, 0A2h, 'r', 01Fh, 036h, 0
+Ckey:
+	.db 004h, 0B1h, 'a', 00Fh, 0A8h, 'd', 02Bh, 0E9h, 'e', 036h, 0BCh, 'l', 00Dh, 0D9h, 'o', 017h, 005h, 'r', 014h, 050h, 's', 033h, 0EBh, 'u', 018h, 0D3h, 0
+Dkey:
+	.db 000h, 000h, 'y', 03Fh, 07Ah, 0
+Ekey:
+	.db 000h, 000h, 'r', 041h, 056h, 'u', 03Bh, 05Ch, 0
+Fkey:
+	.db 007h, 06Ch, 'e', 015h, 0D1h, 0
+Gkey:
+	.db 000h, 000h, 'a', 01Bh, 03Ch, 'd', 03Dh, 06Dh, 'e', 01Ch, 05Fh, 0
+Hkey:
+	.db 000h, 065h, 'e', 001h, 090h, 'f', 045h, 0B9h, 'g', 04Eh, 05Bh, 'o', 040h, 06Dh, 0
+Ikey:
+	.db 031h, 092h, 'n', 02Ch, 0DAh, 'r', 04Bh, 016h, 0
+Kkey:
+	.db 00Fh, 046h, 'r', 020h, 0BCh, 0
+Lkey:
+	.db 000h, 000h, 'a', 036h, 043h, 'i', 002h, 0B6h, 'u', 044h, 059h, 0
+Mkey:
+	.db 000h, 000h, 'g', 009h, 07Fh, 'n', 015h, 076h, 'o', 025h, 07Bh, 0
+Nkey:
+	.db 005h, 079h, 'a', 008h, 0FBh, 'b', 024h, 04Bh, 'd', 038h, 058h, 'e', 007h, 0E2h, 'i', 016h, 0EDh, 0
+Okey:
+	.db 006h, 040h, 's', 04Ah, 04Fh, 0
+Pkey:
+	.db 00Ch, 019h, 'a', 05Ah, 040h, 'b', 050h, 0F0h, 'd', 029h, 092h, 'r', 037h, 00Bh, 't', 04Ch, 034h, 0
+Rkey:
+	.db 000h, 000h, 'b', 021h, 063h, 'e', 048h, 0BDh, 'h', 028h, 033h, 'u', 027h, 07Bh, 0
+Skey:
+	.db 00Ch, 086h, 'b', 02Fh, 090h, 'c', 011h, 090h, 'e', 01Eh, 0D9h, 'i', 00Ah, 0F9h, 'm', 03Ah, 0BCh, 'n', 02Eh, 05Fh, 'r', 022h, 03Ah, 0
+Tkey:
+	.db 000h, 000h, 'a', 046h, 0AFh, 'b', 03Eh, 015h, 'e', 031h, 0D8h, 'h', 05Ah, 0A4h, 'i', 012h, 0B3h, 'l', 04Fh, 0D6h, 'm', 041h, 0FDh, 0
+Ukey:
+	.db 05Ch, 0FBh, 0
+Vkey:
+	.db 013h, 0E6h, 0
+Wkey:
+	.db 047h, 0D0h, 0
+Xkey:
+	.db 000h, 000h, 'e', 033h, 049h, 0
+Ykey:
+	.db 022h, 0BBh, 'b', 043h, 099h, 0
+Zkey:
+	.db 000h, 000h, 'n', 019h, 08Ah, 'r', 023h, 0A2h, 0
+	
+; For numbers, place constants
+tenmil:
+	.db 067h, 069h, 080h
+onemil:
+	.db 0F0h, 0BDh, 0C0h
+hunklo:
+	.db 0FEh, 079h, 060h
+tenklo:
+	.db 0FFh, 0D8h, 0F0h
+oneklo:
+	.db 0FFh, 0FCh, 018h
+hunval:
+	.db 0FFh, 0FFh, 09Ch
+tenval:
+	.db 0FFh, 0FFh, 0F6h
+oneval:
+	.db 0FFh, 0FFh, 0FFh
+	
+; Display strings
+upc:
+	.db "UPC", 0
+lwr:
+	.db "LWR", 0
+num:
+	.db "NUM", 0
+	
+errmsg1:
+	.db "Lwr char out of place!", 0
+errmsg2:
+	.db "Number out of   place!", 0
+errmsg3:
+	.db "Nonexistant     element used!", 0
+errmsg4:
+	.db "Value too large!", 0
+.end
+</code>
+		<script src="code.js" type="text/javascript"></script>
+	</body>
 </html>

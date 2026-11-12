@@ -22,19 +22,20 @@ td div div {
 }
 
 code {
-    display: inline-block;
-    background-color: wheat;
-    border-color: yellowgreen;
-    border-width: 1px;
-    border-style: solid;
-    padding: 20px;
-    color: black;
+	display: inline-block;
+	background-color: wheat;
+	border-color: yellowgreen;
+	border-width: 1px;
+	border-style: solid;
+	padding: 20px;
+	color: black;
 	overflow-x: auto;
 	width: 100%;
 	-webkit-box-sizing: border-box;
-    -moz-box-sizing: border-box;
+	-moz-box-sizing: border-box;
 	box-sizing: border-box;
 	white-space: pre;
+	tab-size: 3;
 }
 
 table {
@@ -65,7 +66,14 @@ table {
 	color: gray;
 }
 
-
 .ctype {
 	color: red;
+}
+
+.cnumber {
+	color: chocolate;
+}
+
+.cspecial {
+	color: chocolate;
 }

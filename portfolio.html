@@ -1,14 +1,340 @@
 <!doctype html>
 <html>
-<head>
-	<title>Portfolio</title>
-	<meta charset="utf-8"/>
-	<meta name="viewport" content="width=device-width, initial-scale=1"/>
-	<link href="portfolio.css" rel="stylesheet" type="text/css"/>
+	<head>
+		<title>Portfolio</title>
+		<meta charset="utf-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1"/>
+		<link href="portfolio.css" rel="stylesheet" type="text/css"/>
+		
+		</head>
+	<body>
+		<h1 class="center">This Page!</h1>
+		<p class="center">The syntax highlighting in this page is done by a WASM script compiled from a C++ source. Below is the source for that script.</p>
+		<code class="cpp">#include &lt;assert.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+
+// Typedefs
+#include "defs.hpp"
+
+// Structs for language keywords and symbols
+#include "keywords.hpp"
+
+// Exposes malloc for JS
+__attribute__((export_name("waMalloc")))
+extern "C" void* waMalloc(uint size) {
+	void *ptr = malloc(size);
+	assert(ptr);
+	return ptr;
+}
+
+// Exposes free for JS
+__attribute__((export_name("waFree")))
+extern "C" void waFree(void *ptr) {
+	free(ptr);
+}
+
+// ----------========== Char buffer class ==========----------
+
+// Number of characters to be allocated at once
+#define NODESIZE 64
+
+// Linked list node
+typedef struct CharNode_t {
+	struct CharNode_t *next;   // The next node in the list
+	char data[NODESIZE];       // The data in the node
+} CharNode;
+
+class CharBuffer {
+	CharNode *head, *tail;   // List head and tail nodes
+	uint size, pos;          // Total character length and tail node fill amount
 	
-	</head>
-<body>
-	<h1 class="center">This Page!</h1>
-	<p class="center">If you scroll down to the bottom of some of the project pages, you'll see a weird image. That's the source code! One of the JavaScript files attached to the pages unfolds that image into text using WebGL. The other file adds syntax highlighting.</p>
-</body>
+	void addTail();
+	
+public:
+	CharBuffer();
+	void addChar(char ch);
+	void addArray(const char *arr, uint len);
+	void addString(const char *str);
+	char* getString();
+};
+
+/*
+ * addTail - Appends a node
+ * Precondition: The current tail node is full
+ * Behavior: Adds an empty node to the end of the data list
+ */
+inline void CharBuffer::addTail() {
+	CharNode *n = (CharNode*)malloc(sizeof(CharNode));
+	assert(n);
+	tail-&gt;next = n;
+	tail = n;
+	tail-&gt;next = NULL;
+	pos = 0;
+}
+
+/*
+ * CharBuffer - Constructor
+ * Behavior: Initializes an empty buffer
+ */
+CharBuffer::CharBuffer() {
+	head = (CharNode*)malloc(sizeof(CharNode));
+	assert(head);
+	tail = head;
+	tail-&gt;next = NULL;
+	size = 0;
+	pos = 0;
+}
+
+/*
+ * addChar - Adds a byte
+ * Parameters: A byte
+ * Behavior: Adds the given byte to the end of the buffer
+ */
+void CharBuffer::addChar(char ch) {
+	assert(pos &lt; NODESIZE);
+	tail-&gt;data[pos++] = ch;
+	size++;
+	if(pos &gt;= NODESIZE) addTail();
+}
+
+/*
+ * addArray - Adds an array of bytes
+ * Parameters: A pointer to an array of bytes and the length of that array
+ * Behavior: Adds the bytes in the array to the end of the buffer
+ */
+void CharBuffer::addArray(const char *arr, uint len) {
+	if(!len) return;
+	assert(arr);
+	assert(pos &lt; NODESIZE);
+	
+	while(len + pos &gt;= NODESIZE) {
+		uint copylen = NODESIZE - pos;
+		memcpy(&tail-&gt;data[pos], arr, copylen);
+		len -= copylen;
+		arr += copylen;
+		size += copylen;
+		addTail();
+	}
+	if(!len) return;
+	memcpy(&tail-&gt;data[pos], arr, len);
+	pos += len;
+	if(pos &gt;= NODESIZE) addTail();
+	size += len;
+}
+
+/*
+ * addString - Adds an string
+ * Parameters: A pointer to a null-terminated string
+ * Behavior: Adds the string to the end of the buffer
+ */
+void CharBuffer::addString(const char *str) {
+	assert(str);
+	addArray(str, strlen(str));
+}
+
+/*
+ * getString - Gets the data in the buffer
+ * Output: A pointer to an array containing the data that was originally in the buffer
+ * Behavior: Allocates a new array for output, frees any storage used by the buffer
+ */
+char* CharBuffer::getString() {
+	char *out = (char*)malloc(size + 4);
+	
+	// Encode the length in little-endian order
+	out[0] = (char)(size & 0xFF);
+	out[1] = (char)((size &gt;&gt; 8) & 0xFF);
+	out[2] = (char)((size &gt;&gt; 16) & 0xFF);
+	out[3] = (char)((size &gt;&gt; 24) & 0xFF);
+	
+	uint outpos = 4;
+	CharNode *npos = head;
+	while(size &gt; NODESIZE) {
+		assert(npos);
+		memcpy(&out[outpos], npos-&gt;data, NODESIZE);
+		outpos += NODESIZE;
+		size -= NODESIZE;
+		CharNode *nnpos = npos-&gt;next;
+		free(npos);
+		npos = nnpos;
+	}
+	assert(npos);
+	assert(!npos-&gt;next);
+	memcpy(&out[outpos], npos-&gt;data, size);
+	free(npos);
+	return out;
+}
+
+// ----------========== Highlighting ==========----------
+
+/*
+ * writeTo - Writes characters to a buffer until a certain character is found
+ * Parameters: The buffer to write to, the string to write, and the character to search
+ *    for
+ * Output: The address of the character immediately after the one found
+ * Behavior: Writes the first character in the string to the buffer, then keeps writing
+ *    characters until one matching the searched-for character is found, while properly
+ *    handling slashes and greater than/less than signs
+ */
+inline const char* writeTo(CharBuffer *buffer, const char* str, char ch) {
+	buffer-&gt;addChar(*str);
+	str++;
+	bool skip = false;
+	while(true) {
+		char chat = *str;
+		assert(chat);
+		str++;
+		
+		if(chat == '&lt;' || chat == '&gt;') {
+			buffer-&gt;addArray(chat == '&lt;' ? "&lt;" : "&gt;", 4);
+		} else buffer-&gt;addChar(chat);
+		if(skip) {
+			skip = false;
+		} else if(chat == '\\') {
+			skip = true;
+		} else if(chat == ch) return str;
+	}
+}
+
+// Enum for code types
+// MUST MATCH the enum in code.js!
+enum CodeType {
+	CPPTYPE = 1,
+	JAVATYPE = 2,
+	ASMTYPE = 3
+};
+
+/*
+ * highlight - Adds HTML highlighting
+ * Parameters: An input string and a code type
+ * Output: A copy of the input string, with HTML tags inserted to highlight the string
+ *    based on the code type given
+ * Behavior: Allocates a new array for output
+ */
+__attribute__((export_name("highlight")))
+extern "C" char* highlight(const char *text, CodeType type) {
+	
+	const MatchLibrary *library = NULL;
+	switch(type) {
+		case CPPTYPE:
+			library = &CPPLIBRARY;
+			break;
+		case JAVATYPE:
+			library = &JAVALIBRARY;
+			break;
+		case ASMTYPE:
+			library = &ASMLIBRARY;
+			break;
+		default:
+			// For some reason, without this printf the switch statement will start
+			// throwing aborts even when a valid type is given
+			printf("Invalid code type %i!\n", type);
+			abort();
+	}
+	CharBuffer buffer = CharBuffer();
+	const char *tpos = text;
+	const uint32_t *lookup = library-&gt;symbols;
+	
+	while(*tpos) {
+		// Find word
+		const char *epos = tpos;
+		while(true) {
+			char chat = *epos;
+			if(lookup[chat / 32] & (1 &lt;&lt; (chat % 32))) break;
+			epos++;
+		}
+		
+		uint wlen = epos - tpos;
+		char chat = *tpos;
+		if(chat == library-&gt;spsymbol) {
+			// Found string starting with a special character, like "#" in C
+			buffer.addArray("&lt;span class=\"cspecial\"&gt;", 23);
+			buffer.addArray(tpos, wlen);
+			buffer.addArray("&lt;/span&gt;", 7);
+		} else if(chat &lt; 32 || chat &gt; 127) {
+			// First character is outside the bounds of the word array, just add as-is
+			buffer.addArray(tpos, wlen);
+		} else if(chat &gt; 47 && chat &lt; 58) {
+			// Found number
+			buffer.addArray("&lt;span class=\"cnumber\"&gt;", 22);
+			buffer.addArray(tpos, wlen);
+			buffer.addArray("&lt;/span&gt;", 7);
+		} else {
+			// Not a special case, look up the word in the list
+			MatchEntry *entries = library-&gt;entries[chat - 32];
+			uint enpos;
+			for(enpos = 0; enpos &lt; library-&gt;llen[chat - 32]; enpos++) {
+				if(entries[enpos].strlen != wlen) continue;
+				if(!memcmp(tpos, entries[enpos].str, wlen)) break;
+			}
+			if(enpos == library-&gt;llen[chat - 32]) {
+				// Miss, Just add the word as-is
+				buffer.addArray(tpos, wlen);
+			} else {
+				// Hit, add formatting
+				buffer.addArray("&lt;span class=\"", 13);
+				buffer.addString(CLASSNAMES[entries[enpos].style]);
+				buffer.addArray("\"&gt;", 2);
+				buffer.addArray(tpos, wlen);
+				buffer.addArray("&lt;/span&gt;", 7);
+			}
+		}
+		tpos = epos;
+		
+		// Now scanning symbols
+		while(true) {
+			char chat = *tpos;
+			if(!chat) goto endL;
+			if(!(lookup[chat / 32] & (1 &lt;&lt; (chat % 32)))) break;
+			if(chat == '"' || chat == '\'') {
+				// Found string
+				buffer.addArray("&lt;span class=\"cquote\"&gt;", 21);
+				tpos = writeTo(&buffer, tpos, chat);
+				buffer.addArray("&lt;/span&gt;", 7);
+				continue;
+			} else if(chat == library-&gt;cmt[0] && !memcmp(tpos, library-&gt;cmt, library-&gt;cmtl)) {
+				// Found end-of-line comment
+				buffer.addArray("&lt;span class=\"ccomment\"&gt;", 23);
+				tpos = writeTo(&buffer, tpos, '\n');
+				buffer.addArray("&lt;/span&gt;", 7);
+				continue;
+			} else if(chat == library-&gt;mlcs[0] && !memcmp(tpos, library-&gt;mlcs, library-&gt;mlcsl)) {
+				// Found multi-line comment
+				const char *eqpos = tpos + 1;
+				eqpos = strstr(eqpos, library-&gt;mlce);
+				assert(eqpos);
+				eqpos += library-&gt;mlcel;
+				buffer.addArray("&lt;span class=\"ccomment\"&gt;", 23);
+				for(const char *expos = tpos; expos &lt; eqpos; expos++) {
+					char chat = *expos;
+					if(chat == '&lt;' || chat == '&gt;') {
+						buffer.addArray(chat == '&lt;' ? "&lt;" : "&gt;", 4);
+					} else buffer.addChar(chat);
+				}
+				buffer.addArray("&lt;/span&gt;", 7);
+				tpos = eqpos;
+				continue;
+			} else if(chat == '&lt;') {
+				// Found &lt;, change to code
+				buffer.addArray("&lt;", 4);
+				tpos++;
+				continue;
+			} else if(chat == '&gt;') {
+				// Found &gt;, change to code
+				buffer.addArray("&gt;", 4);
+				tpos++;
+				continue;
+			}
+			buffer.addChar(chat);
+			tpos++;
+		}
+	}
+	
+endL:
+	buffer.addChar(0);
+	return buffer.getString();
+}</code>
+	<script src="code.js" type="text/javascript"></script>
+	</body>
 </html>
